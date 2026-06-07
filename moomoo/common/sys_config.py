@@ -18,6 +18,7 @@ class RunMode:
 class SysConfig(object):
     IS_PROTO_ENCRYPT = False                # api通讯协议是否加密
     INIT_RSA_FILE = ''                      # 初始连接协议用到的rsa private key file
+    INIT_RSA_FILE_ENV = 'MOOMOO_INIT_RSA_FILE'
     RSA_OBJ = None                          # ras加解密对象
     PROTO_FMT = None                        # 协议格式
     CLINET_ID = None                        # Client标识
@@ -105,7 +106,7 @@ class SysConfig(object):
 
          from moomoo import *
          SysConfig.enable_proto_encrypt(True)
-         SysConfig.set_init_rsa_file("conn_key.txt")   # rsa 私钥文件路径
+         SysConfig.set_init_rsa_file("/path/to/private_key.txt")   # rsa 私钥文件路径
          quote_ctx = OpenQuoteContext(host='127.0.0.1', port=11111)
          quote_ctx.close()
 
@@ -128,7 +129,7 @@ class SysConfig(object):
 
          from moomoo import *
          SysConfig.enable_proto_encrypt(True)
-         SysConfig.set_init_rsa_file("conn_key.txt")   # rsa 私钥文件路径
+         SysConfig.set_init_rsa_file("/path/to/private_key.txt")   # rsa 私钥文件路径
          quote_ctx = OpenQuoteContext(host='127.0.0.1', port=11111)
          quote_ctx.close()
 
@@ -136,6 +137,14 @@ class SysConfig(object):
         SysConfig.INIT_RSA_FILE = str(file)
         SysConfig.RSA_OBJ = None
         RsaCrypt.CHIPPER = None
+
+    @classmethod
+    def get_init_rsa_file(cls):
+        return SysConfig.INIT_RSA_FILE or os.environ.get(SysConfig.INIT_RSA_FILE_ENV, '')
+
+    @classmethod
+    def has_init_rsa_file(cls):
+        return bool(SysConfig.get_init_rsa_file())
 
     @classmethod
     def get_init_rsa_obj(cls):
@@ -157,8 +166,12 @@ class SysConfig(object):
 
     @classmethod
     def _read_rsa_keys(cls):
-        file_path = SysConfig.INIT_RSA_FILE if SysConfig.INIT_RSA_FILE \
-            else os.path.join(os.path.dirname(__file__), DEFAULT_INIT_PRI_KEY_FILE)
+        file_path = SysConfig.get_init_rsa_file()
+        if not file_path:
+            raise Exception(
+                "RSA private key file is required when protocol encryption is enabled. "
+                "Call SysConfig.set_init_rsa_file(...) or set MOOMOO_INIT_RSA_FILE."
+            )
 
         try:
             f = open(file_path, 'rb')
@@ -270,7 +283,6 @@ print(hex_dst)
 src3 = cryptor.decrypt(dst)
 print("len={} decrypt={}".format(len(src3), src3))
 """
-
 
 
 

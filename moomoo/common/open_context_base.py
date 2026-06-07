@@ -58,13 +58,21 @@ class OpenContextBase(object):
     """Base class for set context"""
     metaclass__ = ABCMeta
 
+    @staticmethod
+    def _is_local_host(host):
+        if not is_str(host):
+            host = str(host)
+        return host.lower() in ('127.0.0.1', 'localhost', '::1')
+
     def __init__(self, host, port, is_encrypt=None, is_async_connect=False):
         self.__host = host
         self.__port = port
+        self._lock = RLock()
+        self._is_encrypt = is_encrypt
+        self._validate_connection_security(host)
         self._callback_executor = CallbackExecutor()
         self._net_mgr = NetManager.default()
         self._handler_ctx = HandlerContext(self._is_proc_run)
-        self._lock = RLock()
         self._status = ContextStatus.START
         self._proc_run = True
         self._opend_conn_id = 0
@@ -78,12 +86,9 @@ class OpenContextBase(object):
         self._reconnect_interval = 6  # 重试连接的间隔
         self._sync_query_connect_timeout = None
         self._query_timeout = 12
-        self._is_encrypt = is_encrypt
         self._req_map = {}
         self._recv_buf = bytearray()
         self._push_handler_time_warn = 2
-        if self.is_encrypt():
-            assert SysConfig.INIT_RSA_FILE != '', Err.NotSetRSAFile.text
 
         if is_async_connect:
             self._wait_reconnect(0)
@@ -97,6 +102,19 @@ class OpenContextBase(object):
                     if not self._auto_reconnect:
                         return
                 sleep(self._reconnect_interval)
+
+    def _validate_connection_security(self, host):
+        if not self._is_local_host(host) and not self.is_encrypt():
+            raise Exception(
+                "Non-local connections must be encrypted. Call "
+                "SysConfig.enable_proto_encrypt(True) and SysConfig.set_init_rsa_file(...) "
+                "or set MOOMOO_INIT_RSA_FILE before connecting to remote OpenD."
+            )
+        if self.is_encrypt() and not SysConfig.has_init_rsa_file():
+            raise Exception(
+                Err.NotSetRSAFile.text + " Set MOOMOO_INIT_RSA_FILE or call "
+                "SysConfig.set_init_rsa_file(...)."
+            )
 
     def get_login_user_id(self):
         """

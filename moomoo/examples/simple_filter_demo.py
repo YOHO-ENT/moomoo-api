@@ -3,6 +3,7 @@
 """演示如何使用股票筛选功能"""
 
 import moomoo as ft
+from moomoo.examples._safety import configure_security_from_env
 
 def simple_financial_filter(api_svr_ip, api_svr_port):
     """
@@ -50,6 +51,7 @@ def simple_financial_filter(api_svr_ip, api_svr_port):
     quote_ctx.close()  # 结束后记得关闭当条连接，防止连接条数用尽
 
 if __name__ == "__main__":
+    configure_security_from_env()
     ip = '127.0.0.1'
     port = 11111
 

@@ -4,6 +4,11 @@ Examples for use the python functions: get push data
 """
 from time import sleep
 from moomoo import *
+from moomoo.examples._safety import (
+    configure_security_from_env,
+    ensure_trading_env_allowed,
+    guarded_unlock_trade,
+)
 
 
 
@@ -204,32 +209,41 @@ def trade_hkcc_test():
     A股通交易测试
     :return:
     """
+    trd_env = TrdEnv.SIMULATE
+    if trd_env == TrdEnv.SIMULATE:
+        print("* HKCC paper trading is not supported by this demo. Review the code, set "
+              "MOOMOO_ALLOW_REAL_TRADING=1, and explicitly switch trd_env before real trading.")
+        return
+    ensure_trading_env_allowed(trd_env)
     trd_ctx = OpenHKCCTradeContext(host='127.0.0.1', port=11111)
     trd_ctx.set_handler(TradeOrderTest())
     trd_ctx.set_handler(TradeDealTest())
     trd_ctx.start()
 
-    # 交易请求必须先解锁 !!!
-    pwd_unlock = '979899'
-    print("* unlock_trade : {}\n".format(trd_ctx.unlock_trade(pwd_unlock)))
+    ret, data = guarded_unlock_trade(trd_ctx, trd_env)
+    if ret != RET_OK:
+        print("* unlock_trade fail: {}\n".format(data))
+        trd_ctx.close()
+        return
+    print("* unlock_trade : {}\n".format(data))
 
-    print("* accinfo_query : {}\n".format(trd_ctx.accinfo_query()))
-    print("* position_list_query : {}\n".format(trd_ctx.position_list_query(pl_ratio_min=-50, pl_ratio_max=50)))
-    print("* order_list_query : {}\n".format(trd_ctx.order_list_query(status_filter_list=[OrderStatus.DISABLED])))
+    print("* accinfo_query : {}\n".format(trd_ctx.accinfo_query(trd_env=trd_env)))
+    print("* position_list_query : {}\n".format(trd_ctx.position_list_query(pl_ratio_min=-50, pl_ratio_max=50, trd_env=trd_env)))
+    print("* order_list_query : {}\n".format(trd_ctx.order_list_query(status_filter_list=[OrderStatus.DISABLED], trd_env=trd_env)))
     print("* get_acc_list : {}\n".format(trd_ctx.get_acc_list()))
-    print("* order_list_query : {}\n".format(trd_ctx.order_list_query(status_filter_list=[OrderStatus.SUBMITTED])))
+    print("* order_list_query : {}\n".format(trd_ctx.order_list_query(status_filter_list=[OrderStatus.SUBMITTED], trd_env=trd_env)))
 
-    ret_code, ret_data = trd_ctx.place_order(0.1, 100, "SZ.000979", TrdSide.BUY)
+    ret_code, ret_data = trd_ctx.place_order(0.1, 100, "SZ.000979", TrdSide.BUY, trd_env=trd_env)
     print("* place_order : {}\n".format(ret_data))
     if ret_code == RET_OK:
         order_id = ret_data['order_id'][0]
-        print("* modify_order : {}\n".format(trd_ctx.modify_order(ModifyOrderOp.CANCEL, order_id, 0, 0)))
+        print("* modify_order : {}\n".format(trd_ctx.modify_order(ModifyOrderOp.CANCEL, order_id, 0, 0, trd_env=trd_env)))
 
-    print("* deal_list_query : {}\n".format(trd_ctx.deal_list_query(code="000979")))
+    print("* deal_list_query : {}\n".format(trd_ctx.deal_list_query(code="000979", trd_env=trd_env)))
     print("* history_order_list_query : {}\n".format(trd_ctx.history_order_list_query(status_filter_list=[OrderStatus.FILLED_ALL, OrderStatus.FILLED_PART],
-                                           code="512310", start="", end="2018-2-1")))
+                                           code="512310", start="", end="2018-2-1", trd_env=trd_env)))
 
-    print("* history_deal_list_query : {}\n".format(trd_ctx.history_deal_list_query(code="", start="", end="2018-6-1")))
+    print("* history_deal_list_query : {}\n".format(trd_ctx.history_deal_list_query(code="", start="", end="2018-6-1", trd_env=trd_env)))
 
     sleep(10)
     trd_ctx.close()
@@ -240,33 +254,37 @@ def trade_hk_test():
     港股交易测试
     :return:
     '''
+    trd_env = TrdEnv.SIMULATE
     trd_ctx = OpenHKTradeContext(host='127.0.0.1', port=11111)
     trd_ctx.set_handler(TradeOrderTest())
     trd_ctx.set_handler(TradeDealTest())
     trd_ctx.start()
 
-    # 交易请求必须先解锁 !!!
-    pwd_unlock = '979899'
-    print("* unlock_trade : {}\n".format(trd_ctx.unlock_trade(pwd_unlock)))
+    ret, data = guarded_unlock_trade(trd_ctx, trd_env)
+    if ret != RET_OK:
+        print("* unlock_trade fail: {}\n".format(data))
+        trd_ctx.close()
+        return
+    print("* unlock_trade : {}\n".format(data))
 
     # """
-    print("* accinfo_query : {}\n".format(trd_ctx.accinfo_query()))
-    print("* position_list_query : {}\n".format(trd_ctx.position_list_query(pl_ratio_min=-50, pl_ratio_max=50)))
-    print("* order_list_query : {}\n".format(trd_ctx.order_list_query(status_filter_list=[OrderStatus.DISABLED])))
+    print("* accinfo_query : {}\n".format(trd_ctx.accinfo_query(trd_env=trd_env)))
+    print("* position_list_query : {}\n".format(trd_ctx.position_list_query(pl_ratio_min=-50, pl_ratio_max=50, trd_env=trd_env)))
+    print("* order_list_query : {}\n".format(trd_ctx.order_list_query(status_filter_list=[OrderStatus.DISABLED], trd_env=trd_env)))
     print("* get_acc_list : {}\n".format(trd_ctx.get_acc_list()))
-    print("* order_list_query : {}\n".format(trd_ctx.order_list_query(status_filter_list=[OrderStatus.SUBMITTED])))
+    print("* order_list_query : {}\n".format(trd_ctx.order_list_query(status_filter_list=[OrderStatus.SUBMITTED], trd_env=trd_env)))
 
-    ret_code, ret_data = trd_ctx.place_order(700.0, 100, "HK.00700", TrdSide.SELL)
+    ret_code, ret_data = trd_ctx.place_order(700.0, 100, "HK.00700", TrdSide.SELL, trd_env=trd_env)
     print("* place_order : {}\n".format(ret_data))
     if ret_code == RET_OK:
         order_id = ret_data['order_id'][0]
-        print("* modify_order : {}\n".format(trd_ctx.modify_order(ModifyOrderOp.CANCEL, order_id, 0, 0)))
+        print("* modify_order : {}\n".format(trd_ctx.modify_order(ModifyOrderOp.CANCEL, order_id, 0, 0, trd_env=trd_env)))
 
-    print("* deal_list_query : {}\n".format(trd_ctx.deal_list_query(code="00700")))
+    print("* deal_list_query : {}\n".format(trd_ctx.deal_list_query(code="00700", trd_env=trd_env)))
     print("* history_order_list_query : {}\n".format(trd_ctx.history_order_list_query(status_filter_list=[OrderStatus.FILLED_ALL, OrderStatus.FILLED_PART],
-                                           code="00700", start="", end="2018-2-1")))
+                                           code="00700", start="", end="2018-2-1", trd_env=trd_env)))
 
-    print("* history_deal_list_query : {}\n".format(trd_ctx.history_deal_list_query(code="", start="", end="2018-6-1")))
+    print("* history_deal_list_query : {}\n".format(trd_ctx.history_deal_list_query(code="", start="", end="2018-6-1", trd_env=trd_env)))
     # """
 
     sleep(100000)
@@ -274,15 +292,11 @@ def trade_hk_test():
 
 
 if __name__ =="__main__":
-    set_futu_debug_model(True)
-    '''
-    默认rsa密钥在futu.common下的conn_key.txt
-    注意同步配置FutuOpenD的FTGateway.xml中的 rsa_private_key 字段
-    '''
-    # SysConfig.set_init_rsa_file()
+    configure_security_from_env()
+    set_futu_debug_model(False)
 
     ''' 是否启用协议加密 '''
-    # SysConfig.enable_proto_encrypt(False)
+    # SysConfig.enable_proto_encrypt(True)
 
     '''设置通讯协议格式 '''
     # SysConfig.set_proto_fmt(ProtoFMT.Json)
@@ -297,6 +311,4 @@ if __name__ =="__main__":
     # trade_hk_test()
 
     # trade_hkcc_test()
-
-
 

@@ -4,6 +4,7 @@ Examples for use the python functions: get push data
 """
 from time import sleep
 from moomoo import *
+from moomoo.examples._safety import configure_security_from_env
 
 #打印数据不全请把以下注释打开
 #import pandas as pd
@@ -82,9 +83,9 @@ def quote_test():
 
 
 if __name__ =="__main__":
-    set_futu_debug_model(True)
+    configure_security_from_env()
+    set_futu_debug_model(False)
     ''' 行情api测试 '''
     quote_test()
-
 
 
