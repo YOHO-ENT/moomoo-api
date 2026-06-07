@@ -1,0 +1,16 @@
+moomoo API - YOHO-ENT unofficial maintained fork
+
+This repository is based on the upstream moomoo Python OpenAPI SDK.
+Original upstream copyright and license notices are retained under the
+Apache License, Version 2.0.
+
+Portions of this project are derived from work originally published by
+Moomoo, Inc. and/or Futu, Inc. The moomoo and Futu names, trademarks,
+service marks, and logos belong to their respective owners. This fork is
+not endorsed by, sponsored by, or affiliated with Moomoo, Futu, or their
+affiliates.
+
+YOHO-ENT maintains this fork for compatibility, safety hardening, packaging,
+documentation, and example updates. Some package names, module names,
+protocol definitions, comments, and helper functions may still contain
+legacy "futu" names for API compatibility and protocol compatibility.

@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>moomoo Account Dashboard</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script defer src="/static/app.js"></script>
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">M</div>
+          <div>
+            <div class="brand-name">moomoo</div>
+            <div class="brand-meta">Account Workstation</div>
+          </div>
+        </div>
+
+        <nav class="nav" aria-label="Dashboard sections">
+          <a class="nav-item active" href="#overview">Overview</a>
+          <a class="nav-item" href="#assets">Assets</a>
+          <a class="nav-item" href="#signals">Signals</a>
+          <a class="nav-item" href="#positions">Positions</a>
+        </nav>
+
+        <div class="sidebar-footer">
+          <span class="pulse"></span>
+          <span>Local OpenD</span>
+        </div>
+      </aside>
+
+      <div class="workspace">
+        <header class="topbar">
+          <div class="title-block">
+            <h1>Account Dashboard</h1>
+            <div id="message" class="status-badge muted">Loading...</div>
+          </div>
+
+          <form id="controls" class="toolbar">
+            <label>OpenD host<input id="host" value="127.0.0.1"></label>
+            <label>Port<input id="port" type="number" min="1" max="65535" value="11111"></label>
+            <label>Market<select id="market"><option>US</option><option>HK</option></select></label>
+            <button id="privacy-toggle" class="secondary-button" type="button">Reveal</button>
+            <button type="submit">Refresh</button>
+          </form>
+        </header>
+
+        <main class="content">
+          <section id="overview" class="section-card">
+            <div class="section-header">
+              <h2>OpenD</h2>
+              <span class="section-kicker">Runtime</span>
+            </div>
+            <div id="status" class="metrics"></div>
+          </section>
+
+          <section class="section-card">
+            <div class="section-header">
+              <h2>Account</h2>
+              <span class="section-kicker">FUTUAU REAL</span>
+            </div>
+            <div id="account" class="metrics"></div>
+          </section>
+
+          <section id="assets" class="section-card strong">
+            <div class="section-header">
+              <h2>Assets</h2>
+              <span class="section-kicker">Balance</span>
+            </div>
+            <div id="assets-summary" class="metrics"></div>
+          </section>
+
+          <section class="section-card">
+            <div class="section-header">
+              <h2>Currency Assets</h2>
+              <span class="section-kicker">Cash split</span>
+            </div>
+            <div class="table-scroll"><table id="currency"></table></div>
+          </section>
+
+          <section id="signals" class="section-card">
+            <div class="section-header">
+              <h2>Signals</h2>
+              <span class="section-kicker">market-data-lab</span>
+            </div>
+            <div id="market-data-status" class="market-status muted">Waiting for positions</div>
+            <div class="signal-filters" aria-label="Signal filters">
+              <button class="filter-button active" type="button" data-filter="all">All</button>
+              <button class="filter-button" type="button" data-filter="Momentum">Momentum</button>
+              <button class="filter-button" type="button" data-filter="Risk Review">Risk</button>
+              <button class="filter-button" type="button" data-filter="Data Gap">Data Gap</button>
+            </div>
+            <div id="focus-list" class="focus-grid"></div>
+          </section>
+
+          <section id="positions" class="section-card">
+            <div class="section-header">
+              <h2>Positions</h2>
+              <span class="section-kicker">Holdings</span>
+            </div>
+            <div class="table-scroll"><table id="positions-table"></table></div>
+          </section>
+        </main>
+      </div>
+    </div>
+  </body>
+</html>

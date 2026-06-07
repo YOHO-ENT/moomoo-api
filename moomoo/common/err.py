@@ -18,7 +18,7 @@ class Err:
     PacketDataErr = _ErrField(4, 'Packet data error')
     ConnectionClosed = _ErrField(5, 'Connection closed')
     ParamErr = _ErrField(6, 'Parameter error')
-    NotSetRSAFile = _ErrField(7, 'Conn is encrypted, but no RSA private key file is set. Call SysConfig.set_init_rsa_file.')
+    NotSetRSAFile = _ErrField(7, 'Conn is encrypted, but no RSA private key file is set. Call SysConfig.set_init_rsa_file(...) or set MOOMOO_INIT_RSA_FILE.')
     RsaErr = _ErrField(8, 'RSA key is invalid')
     WrongType = _ErrField(9, 'Wrong type')
     WrongValue = _ErrField(10, 'Wrong value')

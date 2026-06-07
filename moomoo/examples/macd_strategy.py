@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-import talib
 import math
 import datetime
 import logging
 import moomoo as ft
+from moomoo.examples._safety import configure_security_from_env, guarded_unlock_trade
 
 
 class MACD(object):
@@ -13,7 +13,6 @@ class MACD(object):
     # API parameter setting
     api_svr_ip = '127.0.0.1'  # 账户登录的牛牛客户端PC的IP, 本机默认为127.0.0.1
     api_svr_port = 11111  # 富途牛牛端口，默认为11111
-    unlock_password = "123456"  # 美股和港股交易解锁密码
     trade_env = ft.TrdEnv.SIMULATE
 
     def __init__(self, stock, short_period, long_period, smooth_period,
@@ -37,9 +36,7 @@ class MACD(object):
         API trading and quote context setting
         :returns: trade context, quote context
         """
-        if self.unlock_password == "":
-            raise Exception("请先配置交易解锁密码! password: {}".format(
-                self.unlock_password))
+        configure_security_from_env()
 
         quote_ctx = ft.OpenQuoteContext(
             host=self.api_svr_ip, port=self.api_svr_port)
@@ -52,14 +49,13 @@ class MACD(object):
             raise Exception("不支持的stock: {}".format(self.stock))
 
         if self.trade_env == ft.TrdEnv.REAL:
-            ret_code, ret_data = trade_ctx.unlock_trade(
-                self.unlock_password)
+            ret_code, ret_data = guarded_unlock_trade(trade_ctx, self.trade_env)
             if ret_code == ft.RET_OK:
                 print('解锁交易成功!')
             else:
                 raise Exception("请求交易解锁失败: {}".format(ret_data))
         else:
-            print('解锁交易成功!')
+            print('使用模拟交易环境，跳过真实交易解锁。')
 
         return quote_ctx, trade_ctx
 
@@ -67,6 +63,11 @@ class MACD(object):
         """
         handle stock data for trading signal, and make order
         """
+        try:
+            import talib
+        except ImportError:
+            raise RuntimeError("Install TA-Lib before running the MACD strategy example.")
+
         # 读取历史数据，使用sma方式计算均线准确度和数据长度无关，但是在使用ema方式计算均线时建议将历史数据窗口适当放大，结果会更加准确
         today = datetime.datetime.today()
         pre_day = (today - datetime.timedelta(days=self.observation)

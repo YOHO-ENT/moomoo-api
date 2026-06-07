@@ -631,7 +631,7 @@ def _joint_head(proto_id, proto_fmt_type, body_len, str_body, conn_id, serial_no
     # init connect 需要用rsa加密
     try:
         if proto_id == ProtoId.InitConnect:
-            if SysConfig.INIT_RSA_FILE != '':
+            if SysConfig.has_init_rsa_file():
                 str_body = RsaCrypt.encrypt(str_body)
                 body_len = len(str_body)
         else:

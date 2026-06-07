@@ -4,6 +4,7 @@
 """
 import time
 import moomoo as ft
+from moomoo.examples._safety import configure_security_from_env
 
 
 def loop_get_mkt_snapshot(api_svr_ip, api_svr_port, market):
@@ -45,6 +46,7 @@ def loop_get_mkt_snapshot(api_svr_ip, api_svr_port, market):
 
 
 if __name__ == "__main__":
+    configure_security_from_env()
     ip = '127.0.0.1'
     port = 11111
 

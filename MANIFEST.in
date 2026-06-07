@@ -1,10 +1,20 @@
 include README.md
-recursive-include moomoo *.md
-recursive-include moomoo *.url
-recursive-include moomoo *.json
-recursive-include moomoo *.bat
-recursive-include moomoo *.csv
-
+include LICENSE
+include NOTICE
+include DISCLAIMER.md
+include SECURITY.md
 include requirements.txt
+include requirements-gui.txt
+include requirements-dev.txt
 include moomoo/VERSION.txt
-recursive-include doc_maker *
+recursive-include moomoo/common/pb *.proto
+recursive-include moomoo/examples/account_web/static *.html *.css *.js
+include moomoo/quote/head.html
+include moomoo/tools/*.json
+include moomoo/tools/*.template
+include moomoo/tools/*.txt
+exclude moomoo/common/conn_key.txt
+recursive-exclude moomoo conn_key*.txt
+recursive-exclude moomoo *.pem
+recursive-exclude moomoo *.key
+global-exclude __pycache__ *.py[cod] .DS_Store
