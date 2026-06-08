@@ -69,6 +69,35 @@ class FakeWatchlistQuoteContext(object):
         )
 
 
+class FakePositionsTradeContext(object):
+    def __init__(self, ret=None, payload=None):
+        self.ret = service.ft.RET_OK if ret is None else ret
+        self.payload = payload
+        self.trd_env = None
+
+    def position_list_query(self, trd_env):
+        self.trd_env = trd_env
+        if self.ret != service.ft.RET_OK:
+            return self.ret, self.payload
+        payload = self.payload
+        if payload is None:
+            payload = pd.DataFrame(
+                [
+                    {
+                        "code": "US.NVDA",
+                        "stock_name": "NVIDIA",
+                        "qty": 10,
+                        "cost_price": 1,
+                        "market_val": 2,
+                        "pl_val": 3,
+                        "pl_ratio": 4,
+                        "acc_id": "1234567890",
+                    }
+                ]
+            )
+        return self.ret, payload
+
+
 def test_map_moomoo_code_us_hk_and_unsupported():
     assert market_data.map_moomoo_code("US.AAPL")["ticker"] == "AAPL"
     assert market_data.map_moomoo_code("US.BRK.B")["ticker"] == "BRK.B"
@@ -210,6 +239,59 @@ def test_build_watchlists_payload_cache_error(monkeypatch, tmp_path):
     assert "failed to read cache" in payload["error"]
 
 
+def test_watchlists_export_reads_cache_with_mapped_tickers(monkeypatch, tmp_path):
+    monkeypatch.setenv(service.WATCHLIST_CACHE_DIR_ENV, str(tmp_path))
+    service.write_watchlists_cache(
+        service.watchlists_payload(
+            source="opend_sync",
+            group_type_name="CUSTOM",
+            synced_at="2026-06-08T00:00:00+00:00",
+            groups=[
+                {
+                    "group_name": "AI Watch",
+                    "group_type": "CUSTOM",
+                    "count": 3,
+                    "securities": [
+                        {"code": "US.NVDA", "name": "NVIDIA", "lot_size": 1},
+                        {"code": "HK.00700", "name": "Tencent", "lot_size": 100},
+                        {"code": "AU.BHP", "name": "BHP"},
+                    ],
+                    "error": None,
+                }
+            ],
+        )
+    )
+
+    payload = service.build_watchlists_export_payload()
+
+    assert payload["source"] == "moomoo-cache"
+    assert payload["status"] == "ok"
+    assert payload["synced_at"] == "2026-06-08T00:00:00+00:00"
+    assert payload["group_count"] == 1
+    assert "cache_path" not in payload
+    assert payload["groups"][0]["order"] == 0
+    securities = payload["groups"][0]["securities"]
+    assert [security["order"] for security in securities] == [0, 1, 2]
+    assert securities[0]["market_data_ticker"] == "NVDA"
+    assert securities[1]["market_data_ticker"] == "0700.HK"
+    assert securities[2]["mapping_status"] == "unsupported"
+    assert "lot_size" not in securities[0]
+
+
+def test_watchlists_export_cache_missing_is_consumable(monkeypatch, tmp_path):
+    monkeypatch.setenv(service.WATCHLIST_CACHE_DIR_ENV, str(tmp_path))
+
+    payload = service.build_watchlists_export_payload()
+    status = service.build_watchlists_status_payload()
+
+    assert payload["source"] == "moomoo-cache"
+    assert payload["status"] == "cache_missing"
+    assert payload["groups"] == []
+    assert payload["error"] == "watchlists cache not found"
+    assert status["status"] == "cache_missing"
+    assert "cache_path" not in status
+
+
 def test_sync_watchlists_cache_partial_error(monkeypatch, tmp_path):
     fake_ctx = FakeWatchlistQuoteContext()
     sleep_calls = []
@@ -241,6 +323,128 @@ def test_sync_watchlists_cache_partial_error(monkeypatch, tmp_path):
     assert service.read_watchlists_cache()["source"] == "cache"
 
 
+def test_positions_export_only_returns_research_safe_fields(monkeypatch):
+    fake_ctx = FakePositionsTradeContext()
+
+    @contextmanager
+    def fake_trade_context(host, port, market):
+        yield fake_ctx
+
+    monkeypatch.setattr(service, "trade_context", fake_trade_context)
+
+    payload = service.build_positions_export_payload("127.0.0.1", 11111, "US")
+
+    assert payload["source"] == "moomoo-opend"
+    assert payload["status"] == "ok"
+    assert payload["available"] is True
+    assert fake_ctx.trd_env == service.REAL_ENV
+    assert payload["positions"] == [
+        {
+            "code": "US.NVDA",
+            "name": "NVIDIA",
+            "market_data_ticker": "NVDA",
+            "mapping_status": "mapped",
+            "mapping_warning": None,
+            "held": True,
+            "order": 0,
+        }
+    ]
+    forbidden = {"qty", "cost_price", "market_val", "pl_val", "pl_ratio", "acc_id"}
+    assert forbidden.isdisjoint(payload["positions"][0])
+
+
+def test_positions_export_unavailable_is_consumable(monkeypatch):
+    fake_ctx = FakePositionsTradeContext(ret=service.ft.RET_ERROR, payload="OpenD unavailable")
+
+    @contextmanager
+    def fake_trade_context(host, port, market):
+        yield fake_ctx
+
+    monkeypatch.setattr(service, "trade_context", fake_trade_context)
+
+    payload = service.build_positions_export_payload("127.0.0.1", 11111, "US")
+
+    assert payload["status"] == "unavailable"
+    assert payload["available"] is False
+    assert payload["positions"] == []
+    assert payload["error"] == "OpenD unavailable"
+
+
+def test_research_universe_export_uses_watchlist_order_and_merges_positions(monkeypatch, tmp_path):
+    monkeypatch.setenv(service.WATCHLIST_CACHE_DIR_ENV, str(tmp_path))
+    service.write_watchlists_cache(
+        service.watchlists_payload(
+            source="opend_sync",
+            group_type_name="CUSTOM",
+            synced_at="2026-06-08T00:00:00+00:00",
+            groups=[
+                {
+                    "group_name": "AI Watch",
+                    "group_type": "CUSTOM",
+                    "count": 2,
+                    "securities": [
+                        {"code": "US.NVDA", "name": "Nvidia from list"},
+                        {"code": "HK.00700", "name": "Tencent"},
+                    ],
+                    "error": None,
+                },
+                {
+                    "group_name": "Second List",
+                    "group_type": "CUSTOM",
+                    "count": 2,
+                    "securities": [
+                        {"code": "HK.00700", "name": "Tencent duplicate"},
+                        {"code": "US.AAPL", "name": "Apple"},
+                    ],
+                    "error": None,
+                }
+            ],
+        )
+    )
+    fake_ctx = FakePositionsTradeContext(
+        payload=pd.DataFrame(
+            [
+                {"code": "US.NVDA", "stock_name": "NVIDIA"},
+                {"code": "US.TSLA", "stock_name": "Tesla"},
+            ]
+        )
+    )
+
+    @contextmanager
+    def fake_trade_context(host, port, market):
+        yield fake_ctx
+
+    monkeypatch.setattr(service, "trade_context", fake_trade_context)
+
+    payload = service.build_research_universe_export_payload("127.0.0.1", 11111, "US")
+
+    assert payload["source"] == "moomoo-account-web"
+    assert payload["status"] == "ok"
+    assert payload["item_count"] == 4
+    assert [item["code"] for item in payload["items"]] == ["US.NVDA", "HK.00700", "US.AAPL", "US.TSLA"]
+    assert [item["universe_order"] for item in payload["items"]] == [0, 1, 2, 3]
+    nvda = payload["items"][0]
+    assert nvda["name"] == "NVIDIA"
+    assert nvda["held"] is True
+    assert nvda["primary_source"] == "watchlist:AI Watch"
+    assert nvda["sources"] == ["watchlist:AI Watch", "positions"]
+    assert nvda["watchlist_refs"] == [{"group_name": "AI Watch", "group_order": 0, "security_order": 0}]
+    tencent = payload["items"][1]
+    assert tencent["market_data_ticker"] == "0700.HK"
+    assert tencent["held"] is False
+    assert tencent["primary_source"] == "watchlist:AI Watch"
+    assert tencent["sources"] == ["watchlist:AI Watch", "watchlist:Second List"]
+    assert tencent["watchlist_refs"] == [
+        {"group_name": "AI Watch", "group_order": 0, "security_order": 1},
+        {"group_name": "Second List", "group_order": 1, "security_order": 0},
+    ]
+    assert payload["items"][2]["primary_source"] == "watchlist:Second List"
+    assert payload["items"][3]["code"] == "US.TSLA"
+    assert payload["items"][3]["primary_source"] == "positions"
+    assert payload["items"][3]["sources"] == ["positions"]
+    assert {"qty", "cost_price", "market_val", "pl_val", "pl_ratio", "acc_id"}.isdisjoint(nvda)
+
+
 def test_dashboard_route_blocks_remote_before_opend():
     client = TestClient(account_app.app)
     response = client.get("/api/dashboard?host=192.168.1.20&port=11111&market=US")
@@ -260,6 +464,22 @@ def test_watchlists_route_blocks_remote_before_opend():
 def test_watchlists_sync_route_blocks_remote_before_opend():
     client = TestClient(account_app.app)
     response = client.post("/api/watchlists/sync?host=192.168.1.20&port=11111")
+
+    assert response.status_code == 400
+    assert service.ALLOW_REMOTE_ENV in response.json()["detail"]
+
+
+def test_positions_export_route_blocks_remote_before_opend():
+    client = TestClient(account_app.app)
+    response = client.get("/api/positions/export?host=192.168.1.20&port=11111&market=US")
+
+    assert response.status_code == 400
+    assert service.ALLOW_REMOTE_ENV in response.json()["detail"]
+
+
+def test_research_universe_export_route_blocks_remote_before_opend():
+    client = TestClient(account_app.app)
+    response = client.get("/api/research-universe/export?host=192.168.1.20&port=11111&market=US")
 
     assert response.status_code == 400
     assert service.ALLOW_REMOTE_ENV in response.json()["detail"]
@@ -291,6 +511,50 @@ def test_watchlists_route_defaults_to_custom(monkeypatch):
     assert captured == {"host": "127.0.0.1", "port": 11111, "group_type": "CUSTOM"}
     assert response.json()["group_type"] == "CUSTOM"
     assert response.json()["source"] == "cache_missing"
+
+
+def test_watchlists_export_route_defaults_to_custom(monkeypatch):
+    captured = {}
+
+    def fake_build_watchlists_export_payload(group_type):
+        captured["group_type"] = group_type
+        return {
+            "source": "moomoo-cache",
+            "status": "ok",
+            "synced_at": "2026-06-08T00:00:00+00:00",
+            "group_type": group_type,
+            "group_count": 1,
+            "security_count": 1,
+            "groups": [
+                {
+                    "name": "AI Watch",
+                    "type": "CUSTOM",
+                    "count": 1,
+                    "securities": [
+                        {
+                            "code": "US.NVDA",
+                            "name": "NVIDIA",
+                            "market_data_ticker": "NVDA",
+                            "mapping_status": "mapped",
+                            "mapping_warning": None,
+                            "held": False,
+                        }
+                    ],
+                    "error": None,
+                }
+            ],
+            "error": None,
+        }
+
+    monkeypatch.setattr(account_app, "build_watchlists_export_payload", fake_build_watchlists_export_payload)
+
+    response = TestClient(account_app.app).get("/api/watchlists/export")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert captured == {"group_type": "CUSTOM"}
+    assert payload["groups"][0]["securities"][0]["market_data_ticker"] == "NVDA"
+    assert "cache_path" not in payload
 
 
 def test_watchlists_sync_route_defaults_to_custom(monkeypatch):
@@ -330,20 +594,39 @@ def test_watchlists_sync_route_defaults_to_custom(monkeypatch):
 
 
 def test_dashboard_route_uses_masked_payload(monkeypatch):
+    captured = []
     payload = {
-        "connection": {"host": "127.0.0.1", "port": 11111, "market": "US", "security_firm": "FUTUAU"},
+        "connection": {
+            "host": "127.0.0.1",
+            "port": 11111,
+            "market": "US",
+            "security_firm": "FUTUAU",
+            "asset_currency": "USD",
+            "asset_currency_options": ["USD", "HKD", "AUD"],
+        },
         "state": {"program_status_type": "READY", "qot_logined": True, "trd_logined": True},
         "account": {"acc_id": "1234...7890"},
-        "assets": {"total_assets": 1000},
+        "assets": {"total_assets": 1000, "currency": "USD"},
         "positions": [],
         "position_count": 0,
     }
-    monkeypatch.setattr(account_app, "build_dashboard_payload", lambda host, port, market: payload)
+
+    def fake_build_dashboard_payload(host, port, market, currency):
+        captured.append((host, port, market, currency))
+        return payload
+
+    monkeypatch.setattr(account_app, "build_dashboard_payload", fake_build_dashboard_payload)
 
     response = TestClient(account_app.app).get("/api/dashboard?host=127.0.0.1&port=11111&market=US")
 
     assert response.status_code == 200
     assert response.json()["account"]["acc_id"] == "1234...7890"
+    assert captured == [("127.0.0.1", 11111, "US", "USD")]
+
+    response = TestClient(account_app.app).get("/api/dashboard?host=127.0.0.1&port=11111&market=US&currency=AUD")
+
+    assert response.status_code == 200
+    assert captured[-1] == ("127.0.0.1", 11111, "US", "AUD")
 
 
 def test_market_data_route_without_network_for_unsupported_code():
@@ -392,12 +675,15 @@ def test_watchlists_static_contract():
     app_js = open(os.path.join(root, "moomoo/examples/account_web/static/app.js"), encoding="utf-8").read()
     style_css = open(os.path.join(root, "moomoo/examples/account_web/static/style.css"), encoding="utf-8").read()
 
-    assert index_html.count('class="nav-item') == 2
+    assert index_html.count('class="nav-item') == 3
     assert 'data-page-target="overview"' in index_html
     assert 'data-page-target="watchlists"' in index_html
+    assert 'data-page-target="signals"' in index_html
     assert 'data-page="overview"' in index_html
     assert 'data-page="watchlists" hidden' in index_html
+    assert 'data-page="signals" hidden' in index_html
     assert 'href="#watchlists"' in index_html
+    assert 'href="#signals"' in index_html
     assert 'id="watchlist-select"' not in index_html
     assert 'id="watchlist-table"' not in index_html
     assert 'id="watchlists-sync"' in index_html
@@ -405,15 +691,32 @@ def test_watchlists_static_contract():
     assert 'id="watchlists-expand"' in index_html
     assert 'id="watchlists-collapse"' in index_html
     assert 'id="watchlists-list"' in index_html
+    assert 'id="asset-currency"' in index_html
     assert 'id="detail-kicker"' in index_html
+    overview_start = index_html.index('data-page="overview"')
+    watchlists_start = index_html.index('data-page="watchlists"')
+    signals_start = index_html.index('data-page="signals"')
+    assert watchlists_start < signals_start
     assert index_html.index('data-page="watchlists"') < index_html.index('id="watchlists"')
+    assert index_html.index('data-page="signals"') < index_html.index('id="signals"')
+    assert 'id="signals"' not in index_html[overview_start:watchlists_start]
     assert "let activePage" in app_js
+    assert 'const appPages = ["overview", "watchlists", "signals"]' in app_js
+    assert 'const defaultAssetCurrencies = ["USD", "HKD", "AUD", "CNH", "SGD", "JPY"]' in app_js
     assert "let watchlistSearchQuery" in app_js
     assert "let watchlistExpansionMode" in app_js
     assert "let activeDetailMode" in app_js
     assert "function pageFromHash()" in app_js
     assert "function setActivePage(page)" in app_js
+    assert "function assetCurrency()" in app_js
+    assert "function setAssetCurrencyOptions" in app_js
+    assert "currency: assetCurrency()" in app_js
     assert "let currentWatchlists" in app_js
+    assert "function renderSignals()" in app_js
+    assert "function renderPositions()" in app_js
+    assert "function renderAccountResearch()" in app_js
+    assert "renderPositionsTable(sortedPositions(currentPositions))" in app_js
+    assert "renderSignalsAndPositions" not in app_js
     assert "function renderWatchlistTable(rows)" in app_js
     assert "function renderWatchlists(groups)" in app_js
     assert "function visibleWatchlistGroups(groups)" in app_js
@@ -443,6 +746,7 @@ def test_watchlists_static_contract():
     assert ".page-panel[hidden]" in style_css
     assert ".watchlist-toolbar" in style_css
     assert ".watchlist-table" in style_css
+    assert ".asset-currency-control" in style_css
     assert "table-layout: fixed" in style_css
     assert "min-width: 1160px" not in style_css
     assert "text-overflow: ellipsis" in style_css

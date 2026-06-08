@@ -45,3 +45,48 @@ class WatchlistsPayload(BaseModel):
     security_count: int
     groups: List[Dict[str, Any]]
     error: Any = None
+
+
+class WatchlistsStatusPayload(BaseModel):
+    source: str
+    status: str
+    synced_at: Any = None
+    group_type: str
+    group_count: int
+    security_count: int
+    error: Any = None
+
+
+class WatchlistsExportPayload(BaseModel):
+    source: str
+    status: str
+    synced_at: Any = None
+    group_type: str
+    group_count: int
+    security_count: int
+    groups: List[Dict[str, Any]]
+    error: Any = None
+
+
+class PositionsExportPayload(BaseModel):
+    source: str
+    status: str
+    available: bool
+    market: str
+    position_count: int
+    positions: List[Dict[str, Any]]
+    error: Any = None
+
+
+class ResearchUniverseExportPayload(BaseModel):
+    source: str
+    status: str
+    synced_at: Any = None
+    market: str
+    positions_status: str
+    watchlists_status: str
+    item_count: int
+    held_count: int
+    watchlist_security_count: int
+    items: List[Dict[str, Any]]
+    error: Any = None

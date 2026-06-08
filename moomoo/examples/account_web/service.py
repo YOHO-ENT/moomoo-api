@@ -12,10 +12,13 @@ import pandas as pd
 
 import moomoo as ft
 
+from .market_data import map_moomoo_code
+
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 11111
 DEFAULT_MARKET = "US"
+DEFAULT_ASSET_CURRENCY = "USD"
 DEFAULT_WATCHLIST_GROUP_TYPE = "CUSTOM"
 WATCHLIST_CACHE_DIR_ENV = "MOOMOO_ACCOUNT_WEB_CACHE_DIR"
 WATCHLIST_CACHE_FILE = "watchlists_cache.json"
@@ -28,6 +31,14 @@ WATCHLIST_GROUP_TYPES = {
     "CUSTOM": ft.UserSecurityGroupType.CUSTOM,
     "ALL": ft.UserSecurityGroupType.ALL,
     "SYSTEM": ft.UserSecurityGroupType.SYSTEM,
+}
+ASSET_CURRENCIES = {
+    "USD": ft.Currency.USD,
+    "HKD": ft.Currency.HKD,
+    "AUD": ft.Currency.AUD,
+    "CNH": ft.Currency.CNH,
+    "SGD": ft.Currency.SGD,
+    "JPY": ft.Currency.JPY,
 }
 SECURITY_FIRM = ft.SecurityFirm.FUTUAU
 REAL_ENV = ft.TrdEnv.REAL
@@ -57,6 +68,20 @@ def normalize_watchlist_group_type(group_type):
     if group_type not in WATCHLIST_GROUP_TYPES:
         raise ValueError("group_type must be one of CUSTOM, ALL, or SYSTEM.")
     return group_type, WATCHLIST_GROUP_TYPES[group_type]
+
+
+def normalize_asset_currency(currency):
+    currency = str(currency or DEFAULT_ASSET_CURRENCY).strip().upper()
+    if currency not in ASSET_CURRENCIES:
+        raise ValueError("currency must be one of {}.".format(", ".join(ASSET_CURRENCIES)))
+    return currency, ASSET_CURRENCIES[currency]
+
+
+def normalize_market(market_name):
+    market_name = str(market_name or DEFAULT_MARKET).strip().upper()
+    if market_name not in MARKETS:
+        raise ValueError("market must be one of {}.".format(", ".join(MARKETS)))
+    return market_name, MARKETS[market_name]
 
 
 def utc_now_iso():
@@ -101,6 +126,29 @@ def watchlists_payload(source, group_type_name, groups, synced_at=None, error=No
         "groups": groups,
         "error": error,
     }
+
+
+def watchlists_export_status(cache_payload):
+    source = cache_payload.get("source")
+    if source == "cache":
+        return "ok"
+    return source or "unknown"
+
+
+def export_security_record(security, name_key="name", held=False, order=None):
+    code = security.get("code")
+    mapping = map_moomoo_code(code)
+    record = {
+        "code": mapping.get("source_code") or str(code or "").strip().upper(),
+        "name": security.get(name_key) or security.get("name") or security.get("stock_name"),
+        "market_data_ticker": mapping.get("ticker"),
+        "mapping_status": mapping.get("mapping_status"),
+        "mapping_warning": mapping.get("mapping_warning"),
+        "held": held,
+    }
+    if order is not None:
+        record["order"] = order
+    return record
 
 
 def mask_account_id(value):
@@ -248,6 +296,51 @@ def build_watchlists_payload(host=None, port=None, group_type_name=DEFAULT_WATCH
     return read_watchlists_cache(group_type_name)
 
 
+def build_watchlists_status_payload(group_type_name=DEFAULT_WATCHLIST_GROUP_TYPE):
+    cache_payload = read_watchlists_cache(group_type_name)
+    return {
+        "source": "moomoo-cache",
+        "status": watchlists_export_status(cache_payload),
+        "synced_at": cache_payload.get("synced_at"),
+        "group_type": cache_payload.get("group_type"),
+        "group_count": cache_payload.get("group_count", 0),
+        "security_count": cache_payload.get("security_count", 0),
+        "error": cache_payload.get("error"),
+    }
+
+
+def build_watchlists_export_payload(group_type_name=DEFAULT_WATCHLIST_GROUP_TYPE):
+    cache_payload = read_watchlists_cache(group_type_name)
+    groups = []
+
+    for group_order, group in enumerate(cache_payload.get("groups") or []):
+        securities = [
+            export_security_record(security, order=security_order)
+            for security_order, security in enumerate(group.get("securities") or [])
+        ]
+        groups.append(
+            {
+                "name": group.get("group_name"),
+                "type": group.get("group_type"),
+                "order": group_order,
+                "count": len(securities),
+                "securities": securities,
+                "error": group.get("error"),
+            }
+        )
+
+    return {
+        "source": "moomoo-cache",
+        "status": watchlists_export_status(cache_payload),
+        "synced_at": cache_payload.get("synced_at"),
+        "group_type": cache_payload.get("group_type"),
+        "group_count": len(groups),
+        "security_count": sum(len(group["securities"]) for group in groups if not group.get("error")),
+        "groups": groups,
+        "error": cache_payload.get("error"),
+    }
+
+
 def sync_watchlists_cache(host, port, group_type_name=DEFAULT_WATCHLIST_GROUP_TYPE, sleep_func=watchlist_sync_sleep):
     validate_opend_host(host)
     group_type_name, sdk_group_type = normalize_watchlist_group_type(group_type_name)
@@ -292,7 +385,7 @@ def sync_watchlists_cache(host, port, group_type_name=DEFAULT_WATCHLIST_GROUP_TY
     return write_watchlists_cache(payload)
 
 
-def load_account_data(host, port, market):
+def load_account_data(host, port, market, asset_currency):
     with trade_context(host, port, market) as ctx:
         ret, accounts = ctx.get_acc_list()
         if ret != ft.RET_OK:
@@ -302,7 +395,7 @@ def load_account_data(host, port, market):
         if real_accounts.empty:
             raise RuntimeError("No FUTUAU REAL account is available for the selected market.")
 
-        ret, accinfo = ctx.accinfo_query(trd_env=REAL_ENV)
+        ret, accinfo = ctx.accinfo_query(trd_env=REAL_ENV, currency=asset_currency)
         if ret != ft.RET_OK:
             raise RuntimeError(accinfo)
 
@@ -314,11 +407,175 @@ def load_account_data(host, port, market):
     return real_accounts, accinfo, positions
 
 
-def build_dashboard_payload(host, port, market_name):
+def load_position_export_records(host, port, market):
+    with trade_context(host, port, market) as ctx:
+        ret, positions = ctx.position_list_query(trd_env=REAL_ENV)
+        if ret != ft.RET_OK:
+            raise RuntimeError(positions)
+    return records(positions, ["code", "stock_name"])
+
+
+def build_positions_export_payload(host, port, market_name=DEFAULT_MARKET):
     validate_opend_host(host)
-    market = MARKETS[market_name]
+    market_name, market = normalize_market(market_name)
+
+    try:
+        position_records = load_position_export_records(host, port, market)
+    except Exception as exc:
+        return {
+            "source": "moomoo-opend",
+            "status": "unavailable",
+            "available": False,
+            "market": market_name,
+            "position_count": 0,
+            "positions": [],
+            "error": str(exc),
+        }
+
+    positions = [
+        export_security_record(position, name_key="stock_name", held=True, order=position_order)
+        for position_order, position in enumerate(position_records)
+    ]
+    return {
+        "source": "moomoo-opend",
+        "status": "ok",
+        "available": True,
+        "market": market_name,
+        "position_count": len(positions),
+        "positions": positions,
+        "error": None,
+    }
+
+
+def add_watchlist_ref(existing, group_name, group_order, security_order):
+    ref = {
+        "group_name": group_name,
+        "group_order": group_order,
+        "security_order": security_order,
+    }
+    if ref not in existing["watchlist_refs"]:
+        existing["watchlist_refs"].append(ref)
+
+
+def add_universe_item(items_by_code, item, source, universe_order, primary_source=None, watchlist_ref=None):
+    code = item.get("code")
+    if not code:
+        return
+
+    if code not in items_by_code:
+        items_by_code[code] = {
+            "code": code,
+            "name": item.get("name"),
+            "market_data_ticker": item.get("market_data_ticker"),
+            "mapping_status": item.get("mapping_status"),
+            "mapping_warning": item.get("mapping_warning"),
+            "held": bool(item.get("held")),
+            "universe_order": universe_order,
+            "primary_source": primary_source or source,
+            "watchlist_refs": [],
+            "sources": [],
+        }
+    else:
+        existing = items_by_code[code]
+        if item.get("held"):
+            existing["held"] = True
+        if item.get("held") and item.get("name"):
+            existing["name"] = item.get("name")
+        elif not existing.get("name") and item.get("name"):
+            existing["name"] = item.get("name")
+        if not existing.get("market_data_ticker") and item.get("market_data_ticker"):
+            existing["market_data_ticker"] = item.get("market_data_ticker")
+            existing["mapping_status"] = item.get("mapping_status")
+            existing["mapping_warning"] = item.get("mapping_warning")
+
+    if source not in items_by_code[code]["sources"]:
+        items_by_code[code]["sources"].append(source)
+    if watchlist_ref is not None:
+        add_watchlist_ref(
+            items_by_code[code],
+            watchlist_ref.get("group_name"),
+            watchlist_ref.get("group_order"),
+            watchlist_ref.get("security_order"),
+        )
+
+
+def research_universe_status(positions_payload, watchlists_payload, items):
+    positions_ok = positions_payload.get("available") is True
+    watchlists_ok = watchlists_payload.get("status") == "ok"
+    if positions_ok and watchlists_ok:
+        return "ok"
+    if items:
+        return "partial"
+    return "unavailable"
+
+
+def build_research_universe_export_payload(host, port, market_name=DEFAULT_MARKET, group_type_name=DEFAULT_WATCHLIST_GROUP_TYPE):
+    positions_payload = build_positions_export_payload(host, port, market_name)
+    watchlists_payload = build_watchlists_export_payload(group_type_name)
+    items_by_code = {}
+    next_order = 0
+
+    for group in watchlists_payload.get("groups") or []:
+        group_name = group.get("name") or "Unnamed"
+        group_order = group.get("order")
+        for security in group.get("securities") or []:
+            code = security.get("code")
+            source = "watchlist:{}".format(group_name)
+            if code not in items_by_code:
+                universe_order = next_order
+                next_order += 1
+            else:
+                universe_order = items_by_code[code]["universe_order"]
+            add_universe_item(
+                items_by_code,
+                security,
+                source,
+                universe_order,
+                primary_source=source,
+                watchlist_ref={
+                    "group_name": group_name,
+                    "group_order": group_order,
+                    "security_order": security.get("order"),
+                },
+            )
+
+    for position in positions_payload.get("positions") or []:
+        code = position.get("code")
+        if code not in items_by_code:
+            universe_order = next_order
+            next_order += 1
+        else:
+            universe_order = items_by_code[code]["universe_order"]
+        add_universe_item(items_by_code, position, "positions", universe_order)
+
+    items = sorted(items_by_code.values(), key=lambda item: item["universe_order"])
+    errors = {}
+    if positions_payload.get("error"):
+        errors["positions"] = positions_payload.get("error")
+    if watchlists_payload.get("error"):
+        errors["watchlists"] = watchlists_payload.get("error")
+
+    return {
+        "source": "moomoo-account-web",
+        "status": research_universe_status(positions_payload, watchlists_payload, items),
+        "synced_at": watchlists_payload.get("synced_at"),
+        "market": positions_payload.get("market"),
+        "positions_status": positions_payload.get("status"),
+        "watchlists_status": watchlists_payload.get("status"),
+        "item_count": len(items),
+        "held_count": len([item for item in items if item.get("held")]),
+        "watchlist_security_count": watchlists_payload.get("security_count", 0),
+        "items": items,
+        "error": errors or None,
+    }
+
+
+def build_dashboard_payload(host, port, market_name, asset_currency_name=DEFAULT_ASSET_CURRENCY):
+    validate_opend_host(host)
+    market_name, market = normalize_market(market_name)
+    asset_currency_name, asset_currency = normalize_asset_currency(asset_currency_name)
     state = load_global_state(host, port)
-    accounts, accinfo, positions = load_account_data(host, port, market)
+    accounts, accinfo, positions = load_account_data(host, port, market, asset_currency)
 
     account_columns = [
         "acc_id",
@@ -365,6 +622,8 @@ def build_dashboard_payload(host, port, market_name):
             "port": port,
             "market": market_name,
             "security_firm": SECURITY_FIRM,
+            "asset_currency": asset_currency_name,
+            "asset_currency_options": list(ASSET_CURRENCIES),
         },
         "state": state,
         "account": account_records[0] if account_records else {},
