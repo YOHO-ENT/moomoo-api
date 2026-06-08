@@ -14,6 +14,11 @@ let activeWatchlistDataLoadId = 0;
 let watchlistsLoaded = false;
 let currentWatchlistsParamsKey = null;
 let watchlistsSyncing = false;
+let watchlistSearchQuery = "";
+let watchlistExpansionMode = "all-expanded";
+let expandedWatchlists = new Set();
+let collapsedWatchlists = new Set();
+let activeDetailMode = "position";
 
 const numericColumns = new Set([
   "qty",
@@ -76,6 +81,7 @@ const positionColumns = [
 ];
 
 const watchlistColumns = [
+  "holding_status",
   "code",
   "name",
   "md_ticker",
@@ -88,14 +94,26 @@ const watchlistColumns = [
 ];
 
 const columnLabels = {
-  market_data_url: "market_data",
+  holding_status: "status",
+  md_ticker: "ticker",
+  md_price: "price",
+  md_trend: "trend",
+  md_rsi14: "rsi",
+  md_quality: "quality",
+  md_as_of: "as_of",
+  market_data_url: "lab",
 };
 
 const WATCHLIST_SNAPSHOT_BATCH_SIZE = 80;
+const DEFAULT_EXPANDED_WATCHLISTS = 3;
 
 function text(value) {
   if (value === null || value === undefined || value === "") return "N/A";
   return String(value);
+}
+
+function lowerText(value) {
+  return text(value).toLowerCase();
 }
 
 function numberLike(value) {
@@ -276,13 +294,20 @@ function renderMarketDataLinkCell(cell, url) {
   link.target = "_blank";
   link.rel = "noreferrer";
   link.textContent = "Open";
+  link.title = "Open Market Data Lab";
   cell.appendChild(link);
+}
+
+function renderHoldingStatusCell(cell, security) {
+  const status = holdingStatusForSecurity(security);
+  cell.appendChild(chip(status, status === "Held" ? "positive" : "muted"));
 }
 
 function renderWatchlistTable(rows) {
   const wrapper = document.createElement("div");
   wrapper.className = "table-scroll";
   const table = document.createElement("table");
+  table.className = "watchlist-table";
 
   if (!rows || rows.length === 0) {
     const body = document.createElement("tbody");
@@ -307,13 +332,17 @@ function renderWatchlistTable(rows) {
   const body = document.createElement("tbody");
   rows.forEach((source) => {
     const row = body.insertRow();
+    bindOpenWatchlistDetail(row, source);
     watchlistColumns.forEach((column) => {
       const value = source[column];
       const cell = row.insertCell();
       cell.className = cellClass(column, value);
-      if (column === "market_data_url") {
+      if (column === "holding_status") {
+        renderHoldingStatusCell(cell, source);
+      } else if (column === "market_data_url") {
         renderMarketDataLinkCell(cell, value);
       } else {
+        if (column === "name") cell.title = text(value);
         cell.textContent = formatValue(value, column);
       }
     });
@@ -337,6 +366,26 @@ function bindOpenDetail(node, position) {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       openPositionDetail(code);
+    }
+  });
+}
+
+function bindOpenWatchlistDetail(node, security) {
+  const code = security && security.code;
+  if (!code) return;
+
+  node.classList.add("actionable");
+  node.tabIndex = 0;
+  node.setAttribute("role", "button");
+  node.setAttribute("aria-label", `Open ${code} watchlist detail`);
+  node.addEventListener("click", (event) => {
+    if (event.target.closest("a")) return;
+    openWatchlistDetail(code);
+  });
+  node.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      openWatchlistDetail(code);
     }
   });
 }
@@ -392,6 +441,125 @@ function uniqueCodes(positions) {
   return codes;
 }
 
+function holdingForCode(code) {
+  if (!code) return null;
+  return currentPositions.find((position) => position.code === code) || null;
+}
+
+function holdingStatusForSecurity(security) {
+  return holdingForCode(security && security.code) ? "Held" : "Watch";
+}
+
+function watchlistKey(group, index) {
+  return `${index}:${group.group_name || "watchlist"}`;
+}
+
+function watchlistNamesForCode(code) {
+  if (!code) return [];
+  const names = [];
+  currentWatchlists.forEach((group) => {
+    if (group.error) return;
+    const hasCode = (group.securities || []).some((security) => security.code === code);
+    if (hasCode) names.push(group.group_name || "Watchlist");
+  });
+  return names;
+}
+
+function allWatchlistMatchesForCode(code) {
+  if (!code) return [];
+  return currentWatchlists.flatMap((group) =>
+    (group.securities || [])
+      .filter((security) => security.code === code)
+      .map((security) => ({ ...security, group_name: group.group_name || "Watchlist" })),
+  );
+}
+
+function watchlistDetailForCode(code) {
+  const matches = allWatchlistMatchesForCode(code);
+  if (matches.length === 0) return null;
+  const security = matches[0];
+  const holding = holdingForCode(code);
+  return {
+    ...security,
+    holding,
+    holding_status: holding ? "Held" : "Watch",
+    watchlist_names: [...new Set(matches.map((item) => item.group_name))],
+  };
+}
+
+function watchlistCardStats(group) {
+  const securities = group.error ? [] : group.securities || [];
+  const held = securities.filter((security) => holdingForCode(security.code)).length;
+  const mapped = securities.filter((security) => security.md_ticker).length;
+  const dataGap = securities.filter((security) => !security.md_ticker || security.md_quality === "unavailable").length;
+  return {
+    securities: securities.length,
+    held,
+    mapped,
+    dataGap,
+  };
+}
+
+function watchlistGroupMatches(group, query) {
+  if (!query) return true;
+  const groupNameMatches = lowerText(group.group_name).includes(query);
+  if (groupNameMatches) return true;
+  return (group.securities || []).some((security) => watchlistSecurityMatches(security, query));
+}
+
+function watchlistSecurityMatches(security, query) {
+  if (!query) return true;
+  return [security.code, security.name, security.md_ticker, holdingStatusForSecurity(security)]
+    .some((value) => lowerText(value).includes(query));
+}
+
+function visibleWatchlistGroups(groups) {
+  const query = watchlistSearchQuery.trim().toLowerCase();
+  return (groups || [])
+    .map((group, index) => {
+      if (!query) return { ...group, _watchlist_index: index };
+      if (!watchlistGroupMatches(group, query)) return null;
+      const groupNameMatches = lowerText(group.group_name).includes(query);
+      return {
+        ...group,
+        _watchlist_index: index,
+        securities: groupNameMatches
+          ? group.securities || []
+          : (group.securities || []).filter((security) => watchlistSecurityMatches(security, query)),
+      };
+    })
+    .filter(Boolean);
+}
+
+function isWatchlistCollapsed(group, index) {
+  if (watchlistSearchQuery.trim()) return false;
+  const key = watchlistKey(group, index);
+  if (expandedWatchlists.has(key)) return false;
+  if (collapsedWatchlists.has(key)) return true;
+  if (watchlistExpansionMode === "all-expanded") return false;
+  if (watchlistExpansionMode === "all-collapsed") return true;
+  return index >= DEFAULT_EXPANDED_WATCHLISTS;
+}
+
+function toggleWatchlistCollapsed(group, index) {
+  const key = watchlistKey(group, index);
+  if (isWatchlistCollapsed(group, index)) {
+    expandedWatchlists.add(key);
+    collapsedWatchlists.delete(key);
+  } else {
+    collapsedWatchlists.add(key);
+    expandedWatchlists.delete(key);
+  }
+  renderWatchlists(currentWatchlists);
+}
+
+function setWatchlistExpansionMode(mode) {
+  watchlistExpansionMode = mode;
+  expandedWatchlists = new Set();
+  collapsedWatchlists = new Set();
+  renderWatchlists(currentWatchlists);
+}
+
 function snapshotQuality(snapshot) {
   if (!snapshot) return "unavailable";
   if (snapshot.data_quality && snapshot.data_quality.status) return snapshot.data_quality.status;
@@ -445,6 +613,12 @@ function withWatchlistMarketData(security, snapshot) {
     md_rsi14: snapshot ? snapshot.rsi14 : null,
     md_as_of: snapshot ? snapshot.as_of : null,
     md_quality: snapshotQuality(snapshot),
+    md_breakout_status: snapshot ? snapshot.breakout_status : "unavailable",
+    md_relative_strength: relativeStrength(snapshot),
+    md_volume_status: volumeStatus(snapshot),
+    md_volume_ratio: volumeRatio(snapshot),
+    md_return_1m: snapshot ? snapshot.return_1m : null,
+    md_return_3m: snapshot ? snapshot.return_3m : null,
     market_data_url: snapshot ? snapshot.market_data_url : null,
   };
 }
@@ -474,6 +648,9 @@ function unavailableWatchlistSecurities(securities) {
       trend: "unavailable",
       rsi14: null,
       as_of: null,
+      breakout_status: "unavailable",
+      relative_strength_vs_spy: { status: "unavailable" },
+      volume_signal: { status: "unavailable" },
       data_quality: { status: "unavailable" },
       market_data_url: null,
     }),
@@ -647,6 +824,7 @@ function marketDataLink(position) {
 
 function renderPositionDetail(position) {
   const content = $("detail-content");
+  $("detail-kicker").textContent = "Position research";
   if (!position) {
     $("detail-title").textContent = "Holding Detail";
     content.replaceChildren();
@@ -693,6 +871,83 @@ function renderPositionDetail(position) {
   content.replaceChildren(summary, signal, market, quality);
 }
 
+function renderWatchlistDetail(security) {
+  const content = $("detail-content");
+  $("detail-kicker").textContent = "Watchlist research";
+  if (!security) {
+    $("detail-title").textContent = "Watchlist Detail";
+    content.replaceChildren();
+    return;
+  }
+
+  const holding = security.holding;
+  $("detail-title").textContent = security.code || "Watchlist Detail";
+
+  const summary = detailSection("Watchlist Summary", [
+    detailItem("Name", security.name || security.md_ticker),
+    detailItem("Code", security.code),
+    detailItem("Lists", (security.watchlist_names || []).join(", ")),
+    detailItem("Status", security.holding_status),
+    detailItem("Type", security.stock_type),
+    detailItem("Mapped Ticker", security.md_ticker),
+  ]);
+
+  const holdingItems = holding
+    ? [
+        detailItem("Holding", "Held"),
+        detailItem("Quantity", holding.qty, "qty"),
+        detailItem("Market Value", holding.market_val, "market_val"),
+        detailItem("P/L", holding.pl_val, "pl_val"),
+        detailItem("P/L Ratio", holding.pl_ratio, "pl_ratio"),
+        detailItem("Side", holding.position_side),
+      ]
+    : [
+        detailItem("Holding", "Not held"),
+        detailItem("Quantity", null, "qty"),
+        detailItem("Market Value", null, "market_val"),
+        detailItem("P/L", null, "pl_val"),
+        detailItem("P/L Ratio", null, "pl_ratio"),
+        detailItem("Side", null),
+      ];
+
+  const market = detailSection("Market Data Lab Snapshot", [
+    detailItem("Ticker", security.md_ticker),
+    detailItem("Price", security.md_price, "md_price"),
+    detailItem("Trend", security.md_trend),
+    detailItem("RSI 14", security.md_rsi14, "md_rsi14"),
+    detailItem("Breakout", security.md_breakout_status),
+    detailItem("Relative Strength", security.md_relative_strength),
+    detailItem("Volume Signal", security.md_volume_status),
+    detailItem("Volume Ratio", security.md_volume_ratio),
+    detailItem("1M Return", security.md_return_1m, "", formatReturn),
+    detailItem("3M Return", security.md_return_3m, "", formatReturn),
+    detailItem("As Of", security.md_as_of),
+  ]);
+
+  const quality = detailSection("Data Quality", [
+    detailItem("Quality", security.md_quality),
+    detailItem("Mapped Ticker", security.md_ticker),
+    detailItem("Snapshot Date", security.md_as_of),
+    marketDataLink(security),
+  ]);
+
+  content.replaceChildren(summary, detailSection("Holding Match", holdingItems), market, quality);
+}
+
+function refreshActiveDetail() {
+  if (!activeDetailCode) return;
+  if (activeDetailMode === "watchlist") {
+    renderWatchlistDetail(watchlistDetailForCode(activeDetailCode));
+    return;
+  }
+  const position = selectedPosition();
+  if (position) {
+    renderPositionDetail(position);
+  } else {
+    closePositionDetail();
+  }
+}
+
 function setDetailVisible(visible) {
   $("detail-backdrop").hidden = !visible;
   $("position-detail").hidden = !visible;
@@ -701,13 +956,22 @@ function setDetailVisible(visible) {
 }
 
 function openPositionDetail(code) {
+  activeDetailMode = "position";
   activeDetailCode = code;
   renderPositionDetail(selectedPosition());
   setDetailVisible(true);
 }
 
+function openWatchlistDetail(code) {
+  activeDetailMode = "watchlist";
+  activeDetailCode = code;
+  renderWatchlistDetail(watchlistDetailForCode(code));
+  setDetailVisible(true);
+}
+
 function closePositionDetail() {
   activeDetailCode = null;
+  activeDetailMode = "position";
   setDetailVisible(false);
   renderPositionDetail(null);
 }
@@ -774,17 +1038,10 @@ function renderSignalsAndPositions() {
   updateFilterButtons();
   renderFocusList();
   renderPositionsTable(filteredPositions());
-  if (activeDetailCode) {
-    const position = selectedPosition();
-    if (position) {
-      renderPositionDetail(position);
-    } else {
-      closePositionDetail();
-    }
-  }
+  refreshActiveDetail();
 }
 
-function renderWatchlistSummary() {
+function renderWatchlistSummary(visibleGroups = currentWatchlists) {
   const target = $("watchlist-summary");
   const payload = currentWatchlistsPayload;
   const partialErrors = currentWatchlists.filter((group) => group.error).length;
@@ -796,6 +1053,12 @@ function renderWatchlistSummary() {
     items.push(chip(payload.group_type));
     items.push(chip(payload.source || "cache"));
     if (payload.synced_at) items.push(chip(`synced ${payload.synced_at}`));
+  }
+
+  if (watchlistSearchQuery.trim()) {
+    const visibleSecurityCount = visibleGroups.reduce((total, group) => total + ((group.securities || []).length), 0);
+    items.push(chip(`${visibleGroups.length} matching lists`));
+    items.push(chip(`${visibleSecurityCount} shown`));
   }
 
   if (partialErrors > 0) items.push(chip(`${partialErrors} partial errors`, "warning"));
@@ -812,6 +1075,9 @@ function watchlistStatusText(group) {
 function renderWatchlistCard(group, index) {
   const card = document.createElement("article");
   card.className = "watchlist-card";
+  const sourceIndex = group._watchlist_index ?? index;
+  const collapsed = isWatchlistCollapsed(group, sourceIndex);
+  if (collapsed) card.classList.add("is-collapsed");
 
   const header = document.createElement("div");
   header.className = "watchlist-card-header";
@@ -824,13 +1090,24 @@ function renderWatchlistCard(group, index) {
 
   const meta = document.createElement("div");
   meta.className = "watchlist-card-meta";
+  const stats = watchlistCardStats(group);
   meta.append(
     chip(group.group_type || "CUSTOM"),
     chip(watchlistStatusText(group), group.error ? "warning" : "muted"),
+    chip(`${stats.held} held`, stats.held > 0 ? "positive" : "muted"),
+    chip(`${stats.mapped}/${stats.securities} mapped`),
+    chip(`${stats.dataGap} data gaps`, stats.dataGap > 0 ? "warning" : "muted"),
   );
 
   titleBlock.append(title, meta);
-  header.appendChild(titleBlock);
+  const toggle = document.createElement("button");
+  toggle.className = "secondary-button watchlist-toggle";
+  toggle.type = "button";
+  toggle.textContent = collapsed ? "Expand" : "Collapse";
+  toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  toggle.addEventListener("click", () => toggleWatchlistCollapsed(group, sourceIndex));
+
+  header.append(titleBlock, toggle);
   card.appendChild(header);
 
   if (group.error) {
@@ -840,26 +1117,30 @@ function renderWatchlistCard(group, index) {
     card.appendChild(error);
   }
 
-  card.appendChild(renderWatchlistTable(group.securities || []));
+  if (!collapsed) card.appendChild(renderWatchlistTable(group.securities || []));
   return card;
 }
 
 function renderWatchlists(groups) {
   const target = $("watchlists-list");
-  renderWatchlistSummary();
+  const visibleGroups = visibleWatchlistGroups(groups);
+  renderWatchlistSummary(visibleGroups);
 
-  if (!groups || groups.length === 0) {
+  if (!visibleGroups || visibleGroups.length === 0) {
     const empty = document.createElement("div");
     empty.className = "watchlist-empty";
     empty.textContent =
       currentWatchlistsPayload?.source === "cache_missing"
         ? "No cache yet. Sync from OpenD to load your watchlists."
+        : watchlistSearchQuery.trim()
+          ? "No matching watchlists"
         : "No custom watchlists";
     target.replaceChildren(empty);
     return;
   }
 
-  target.replaceChildren(...groups.map((group, index) => renderWatchlistCard(group, index)));
+  target.replaceChildren(...visibleGroups.map((group, index) => renderWatchlistCard(group, index)));
+  refreshActiveDetail();
 }
 
 function renderWatchlistCacheStatus(payload) {
@@ -1114,12 +1395,14 @@ async function loadDashboard(loadId) {
     currentPositions = unavailablePositions(data.positions);
     renderDashboardData(data);
     renderSignalsAndPositions();
+    renderWatchlists(currentWatchlists);
     setMessage(`${data.position_count} positions`, "positive");
 
     const enrichedPositions = await loadMarketData(data.positions);
     if (loadId !== activeLoadId) return;
     currentPositions = enrichedPositions;
     renderSignalsAndPositions();
+    renderWatchlists(currentWatchlists);
   } catch (error) {
     if (loadId !== activeLoadId) return;
     setMessage(error.message, "error");
@@ -1171,6 +1454,14 @@ document.querySelectorAll(".filter-button").forEach((button) => {
     renderSignalsAndPositions();
   });
 });
+
+$("watchlist-search").addEventListener("input", (event) => {
+  watchlistSearchQuery = event.target.value.trim().toLowerCase();
+  renderWatchlists(currentWatchlists);
+});
+
+$("watchlists-expand").addEventListener("click", () => setWatchlistExpansionMode("all-expanded"));
+$("watchlists-collapse").addEventListener("click", () => setWatchlistExpansionMode("all-collapsed"));
 
 document.querySelectorAll("[data-page-target]").forEach((item) => {
   item.addEventListener("click", (event) => {

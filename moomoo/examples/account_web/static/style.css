@@ -334,6 +334,20 @@ table {
   font-size: 12px;
 }
 
+.watchlist-table {
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+}
+
+.watchlist-table th,
+.watchlist-table td {
+  overflow: hidden;
+  padding-right: 8px;
+  padding-left: 8px;
+  text-overflow: ellipsis;
+}
+
 th,
 td {
   border-bottom: 1px solid var(--color-border);
@@ -358,6 +372,58 @@ tbody tr:hover {
 
 tbody tr:last-child td {
   border-bottom: 0;
+}
+
+.watchlist-table th:nth-child(1),
+.watchlist-table td:nth-child(1) {
+  width: 6.5%;
+}
+
+.watchlist-table th:nth-child(2),
+.watchlist-table td:nth-child(2) {
+  width: 8.5%;
+}
+
+.watchlist-table th:nth-child(3),
+.watchlist-table td:nth-child(3) {
+  width: 28%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.watchlist-table th:nth-child(4),
+.watchlist-table td:nth-child(4) {
+  width: 7.5%;
+}
+
+.watchlist-table th:nth-child(5),
+.watchlist-table td:nth-child(5) {
+  width: 8%;
+}
+
+.watchlist-table th:nth-child(6),
+.watchlist-table td:nth-child(6) {
+  width: 10%;
+}
+
+.watchlist-table th:nth-child(7),
+.watchlist-table td:nth-child(7) {
+  width: 6.5%;
+}
+
+.watchlist-table th:nth-child(8),
+.watchlist-table td:nth-child(8) {
+  width: 8%;
+}
+
+.watchlist-table th:nth-child(9),
+.watchlist-table td:nth-child(9) {
+  width: 10%;
+}
+
+.watchlist-table th:nth-child(10),
+.watchlist-table td:nth-child(10) {
+  width: 7%;
 }
 
 .ticker,
@@ -471,6 +537,29 @@ tbody tr:last-child td {
   padding: 0 12px;
 }
 
+.watchlist-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  min-width: 0;
+  margin-top: 12px;
+}
+
+.watchlist-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.watchlist-toolbar-actions .secondary-button,
+.watchlist-toggle {
+  height: 34px;
+  padding: 0 12px;
+}
+
 .watchlist-summary {
   display: flex;
   flex-wrap: wrap;
@@ -499,6 +588,10 @@ tbody tr:last-child td {
   display: grid;
   gap: 10px;
   padding: 12px;
+}
+
+.watchlist-card.is-collapsed {
+  background: color-mix(in srgb, var(--color-background) 86%, var(--color-surface));
 }
 
 .watchlist-empty {
@@ -545,9 +638,12 @@ tbody tr:last-child td {
 }
 
 .watchlist-link {
+  display: block;
+  overflow: hidden;
   color: var(--color-accent);
   font-weight: 750;
   text-decoration: none;
+  text-overflow: ellipsis;
 }
 
 .watchlist-link:hover {
@@ -674,6 +770,7 @@ tbody tr:last-child td {
 
 .focus-card.actionable:hover,
 .focus-card.actionable:focus-visible,
+tbody tr.actionable:hover,
 tbody tr.actionable:focus-visible {
   border-color: color-mix(in srgb, var(--color-accent) 30%, var(--color-border));
   background: color-mix(in srgb, var(--color-surface) 72%, transparent);
@@ -884,7 +981,8 @@ tbody tr.actionable:focus-visible {
 @media (max-width: 680px) {
   .toolbar,
   .metrics,
-  .focus-grid {
+  .focus-grid,
+  .watchlist-toolbar {
     grid-template-columns: 1fr;
   }
 

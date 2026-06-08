@@ -227,6 +227,11 @@ cache and returns `source="cache"`, `source="cache_missing"`, or
 returns `source="opend_sync"`. Supported `group_type` values are `CUSTOM`,
 `ALL`, and `SYSTEM`, though the UI uses `CUSTOM`.
 
+The Watchlists page includes local research controls: search by list, code,
+name, or mapped ticker; expand or collapse all lists; show `Held` versus
+`Watch` status by comparing cached watchlists with the current positions; and
+open the same read-only detail drawer for any watchlist row.
+
 The default cache file is:
 
 ```text
