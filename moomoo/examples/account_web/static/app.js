@@ -15,7 +15,7 @@ let watchlistsLoaded = false;
 let currentWatchlistsParamsKey = null;
 let watchlistsSyncing = false;
 let watchlistSearchQuery = "";
-let watchlistExpansionMode = "default";
+let watchlistExpansionMode = "all-expanded";
 let expandedWatchlists = new Set();
 let collapsedWatchlists = new Set();
 let activeDetailMode = "position";
@@ -95,7 +95,13 @@ const watchlistColumns = [
 
 const columnLabels = {
   holding_status: "status",
-  market_data_url: "market_data",
+  md_ticker: "ticker",
+  md_price: "price",
+  md_trend: "trend",
+  md_rsi14: "rsi",
+  md_quality: "quality",
+  md_as_of: "as_of",
+  market_data_url: "lab",
 };
 
 const WATCHLIST_SNAPSHOT_BATCH_SIZE = 80;
@@ -288,6 +294,7 @@ function renderMarketDataLinkCell(cell, url) {
   link.target = "_blank";
   link.rel = "noreferrer";
   link.textContent = "Open";
+  link.title = "Open Market Data Lab";
   cell.appendChild(link);
 }
 
@@ -300,6 +307,7 @@ function renderWatchlistTable(rows) {
   const wrapper = document.createElement("div");
   wrapper.className = "table-scroll";
   const table = document.createElement("table");
+  table.className = "watchlist-table";
 
   if (!rows || rows.length === 0) {
     const body = document.createElement("tbody");
@@ -334,6 +342,7 @@ function renderWatchlistTable(rows) {
       } else if (column === "market_data_url") {
         renderMarketDataLinkCell(cell, value);
       } else {
+        if (column === "name") cell.title = text(value);
         cell.textContent = formatValue(value, column);
       }
     });

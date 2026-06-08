@@ -423,6 +423,8 @@ def test_watchlists_static_contract():
     assert "function bindOpenWatchlistDetail(node, security)" in app_js
     assert "function openWatchlistDetail(code)" in app_js
     assert "function renderWatchlistDetail(security)" in app_js
+    assert 'table.className = "watchlist-table"' in app_js
+    assert 'if (column === "name") cell.title = text(value);' in app_js
     assert "Held" in app_js
     assert "Watchlist research" in app_js
     assert "function fetchMarketDataSnapshotsInBatches(codes)" in app_js
@@ -440,6 +442,10 @@ def test_watchlists_static_contract():
     assert ".page-panel" in style_css
     assert ".page-panel[hidden]" in style_css
     assert ".watchlist-toolbar" in style_css
+    assert ".watchlist-table" in style_css
+    assert "table-layout: fixed" in style_css
+    assert "min-width: 1160px" not in style_css
+    assert "text-overflow: ellipsis" in style_css
     assert ".watchlists-stack" in style_css
     assert ".watchlist-card" in style_css
     assert ".watchlist-toggle" in style_css
