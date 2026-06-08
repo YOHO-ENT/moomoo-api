@@ -830,26 +830,28 @@ tbody tr.actionable:focus-visible {
   position: fixed;
   inset: 0;
   z-index: 40;
-  background: rgba(2, 6, 23, 0.58);
+  background: rgba(2, 6, 23, 0.68);
 }
 
-.detail-drawer {
+.detail-modal {
   position: fixed;
-  top: 0;
-  right: 0;
+  top: 50%;
+  left: 50%;
   z-index: 50;
   display: flex;
   flex-direction: column;
-  width: 420px;
-  max-width: min(440px, 100vw);
-  height: 100vh;
-  border-left: 1px solid var(--color-border);
+  width: min(880px, calc(100vw - 48px));
+  max-height: min(820px, calc(100vh - 48px));
+  transform: translate(-50%, -50%);
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
   background: var(--color-surface);
-  box-shadow: -18px 0 40px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 24px 72px rgba(0, 0, 0, 0.42);
 }
 
 .detail-backdrop[hidden],
-.detail-drawer[hidden] {
+.detail-modal[hidden] {
   display: none;
 }
 
@@ -862,6 +864,10 @@ tbody tr.actionable:focus-visible {
   padding: 18px;
 }
 
+.detail-header > div:first-child {
+  min-width: 0;
+}
+
 .detail-kicker {
   margin-bottom: 5px;
   color: var(--color-text-secondary);
@@ -872,8 +878,26 @@ tbody tr.actionable:focus-visible {
 
 .detail-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+  justify-content: flex-end;
+}
+
+.detail-lab-action {
+  display: flex;
+  min-width: 0;
+}
+
+.detail-lab-action:empty {
+  display: none;
+}
+
+.detail-lab-action .detail-link,
+.detail-lab-action .detail-link-disabled {
+  min-height: 34px;
+  height: 34px;
+  white-space: nowrap;
 }
 
 .detail-close {
@@ -1041,8 +1065,9 @@ tbody tr.actionable:focus-visible {
     gap: 8px;
   }
 
-  .detail-drawer {
-    width: 100vw;
+  .detail-modal {
+    width: calc(100vw - 24px);
+    max-height: calc(100vh - 24px);
   }
 
   .detail-grid {

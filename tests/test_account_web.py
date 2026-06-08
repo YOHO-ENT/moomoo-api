@@ -648,25 +648,46 @@ def test_privacy_defaults_and_static_files_present():
     assert os.path.exists(os.path.join(root, "moomoo/examples/account_web/static/style.css"))
 
 
-def test_position_detail_drawer_static_contract():
+def test_position_detail_modal_static_contract():
     root = os.path.dirname(os.path.dirname(__file__))
     index_html = open(os.path.join(root, "moomoo/examples/account_web/static/index.html"), encoding="utf-8").read()
     app_js = open(os.path.join(root, "moomoo/examples/account_web/static/app.js"), encoding="utf-8").read()
     style_css = open(os.path.join(root, "moomoo/examples/account_web/static/style.css"), encoding="utf-8").read()
 
     assert 'id="position-detail"' in index_html
+    assert 'class="detail-modal"' in index_html
+    assert 'role="dialog"' in index_html
     assert 'id="detail-backdrop"' in index_html
+    assert 'id="detail-lab-action"' in index_html
     assert 'id="detail-privacy"' in index_html
+    assert index_html.index('id="detail-lab-action"') < index_html.index('id="detail-privacy"')
     assert "let activeDetailCode = null;" in app_js
     assert "function togglePrivacyMode()" in app_js
     assert "function selectedPosition()" in app_js
+    assert "function renderDetailLabAction(item)" in app_js
+    assert "renderDetailLabAction(position)" in app_js
+    assert "renderDetailLabAction(security)" in app_js
+    assert "renderDetailLabAction(null)" in app_js
     assert "function renderPositionDetail(position)" in app_js
     assert "function openPositionDetail(code)" in app_js
     assert "function closePositionDetail()" in app_js
     assert "function renderPositionsTable(rows)" in app_js
     assert "market_data_url" in app_js
-    assert ".detail-drawer" in style_css
-    assert "max-width: min(440px, 100vw)" in style_css
+    position_quality = app_js[
+        app_js.index('const quality = detailSection("Data Quality", ['):
+        app_js.index("content.replaceChildren(summary, signal, market, quality);")
+    ]
+    watchlist_quality = app_js[
+        app_js.rindex('const quality = detailSection("Data Quality", ['):
+        app_js.index('content.replaceChildren(summary, detailSection("Holding Match", holdingItems), market, quality);')
+    ]
+    assert "marketDataLink" not in position_quality
+    assert "marketDataLink" not in watchlist_quality
+    assert ".detail-modal" in style_css
+    assert ".detail-lab-action" in style_css
+    assert ".detail-drawer" not in style_css
+    assert "width: min(880px, calc(100vw - 48px))" in style_css
+    assert "transform: translate(-50%, -50%)" in style_css
 
 
 def test_watchlists_static_contract():

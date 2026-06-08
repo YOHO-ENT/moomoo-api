@@ -844,16 +844,27 @@ function marketDataLink(position) {
   return link;
 }
 
+function renderDetailLabAction(item) {
+  const action = $("detail-lab-action");
+  if (!item) {
+    action.replaceChildren();
+    return;
+  }
+  action.replaceChildren(marketDataLink(item));
+}
+
 function renderPositionDetail(position) {
   const content = $("detail-content");
   $("detail-kicker").textContent = "Position research";
   if (!position) {
     $("detail-title").textContent = "Holding Detail";
+    renderDetailLabAction(null);
     content.replaceChildren();
     return;
   }
 
   $("detail-title").textContent = position.code || "Holding Detail";
+  renderDetailLabAction(position);
 
   const summary = detailSection("Holding Summary", [
     detailItem("Name", position.stock_name || position.md_ticker),
@@ -887,7 +898,6 @@ function renderPositionDetail(position) {
     detailItem("Quality", position.md_quality),
     detailItem("Mapped Ticker", position.md_ticker),
     detailItem("Snapshot Date", position.md_as_of),
-    marketDataLink(position),
   ]);
 
   content.replaceChildren(summary, signal, market, quality);
@@ -898,12 +908,14 @@ function renderWatchlistDetail(security) {
   $("detail-kicker").textContent = "Watchlist research";
   if (!security) {
     $("detail-title").textContent = "Watchlist Detail";
+    renderDetailLabAction(null);
     content.replaceChildren();
     return;
   }
 
   const holding = security.holding;
   $("detail-title").textContent = security.code || "Watchlist Detail";
+  renderDetailLabAction(security);
 
   const summary = detailSection("Watchlist Summary", [
     detailItem("Name", security.name || security.md_ticker),
@@ -950,7 +962,6 @@ function renderWatchlistDetail(security) {
     detailItem("Quality", security.md_quality),
     detailItem("Mapped Ticker", security.md_ticker),
     detailItem("Snapshot Date", security.md_as_of),
-    marketDataLink(security),
   ]);
 
   content.replaceChildren(summary, detailSection("Holding Match", holdingItems), market, quality);
