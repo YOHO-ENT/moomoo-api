@@ -20,6 +20,9 @@ let expandedWatchlists = new Set();
 let collapsedWatchlists = new Set();
 let activeDetailMode = "position";
 
+const appPages = ["overview", "watchlists", "signals"];
+const defaultAssetCurrencies = ["USD", "HKD", "AUD", "CNH", "SGD", "JPY"];
+
 const numericColumns = new Set([
   "qty",
   "can_sell_qty",
@@ -173,13 +176,32 @@ function setWatchlistsSyncing(syncing) {
   button.textContent = syncing ? "Syncing..." : "Sync from OpenD";
 }
 
+function assetCurrency() {
+  return ($("asset-currency").value || "USD").trim().toUpperCase();
+}
+
+function setAssetCurrencyOptions(options = defaultAssetCurrencies, selected = assetCurrency()) {
+  const select = $("asset-currency");
+  const nextOptions = Array.from(new Set([selected, ...options, ...defaultAssetCurrencies].filter(Boolean)));
+  const current = selected || "USD";
+  select.replaceChildren(
+    ...nextOptions.map((currency) => {
+      const option = document.createElement("option");
+      option.value = currency;
+      option.textContent = currency;
+      option.selected = currency === current;
+      return option;
+    }),
+  );
+}
+
 function pageFromHash() {
   const page = window.location.hash.replace("#", "").trim();
-  return ["overview", "watchlists"].includes(page) ? page : "overview";
+  return appPages.includes(page) ? page : "overview";
 }
 
 function setActivePage(page) {
-  activePage = ["overview", "watchlists"].includes(page) ? page : "overview";
+  activePage = appPages.includes(page) ? page : "overview";
 
   document.querySelectorAll("[data-page]").forEach((panel) => {
     panel.hidden = panel.dataset.page !== activePage;
@@ -202,7 +224,7 @@ function togglePrivacyMode() {
   privacyMode = !privacyMode;
   updatePrivacyButtons();
   if (currentDashboard) renderDashboardData(currentDashboard);
-  renderSignalsAndPositions();
+  renderAccountResearch();
   renderWatchlists(currentWatchlists);
 }
 
@@ -1034,10 +1056,18 @@ function updateFilterButtons() {
   });
 }
 
-function renderSignalsAndPositions() {
+function renderSignals() {
   updateFilterButtons();
   renderFocusList();
-  renderPositionsTable(filteredPositions());
+}
+
+function renderPositions() {
+  renderPositionsTable(sortedPositions(currentPositions));
+}
+
+function renderAccountResearch() {
+  renderSignals();
+  renderPositions();
   refreshActiveDetail();
 }
 
@@ -1331,6 +1361,7 @@ async function syncWatchlistsFromOpenD() {
 }
 
 function renderDashboardData(data) {
+  setAssetCurrencyOptions(data.connection.asset_currency_options, data.assets.currency || data.connection.asset_currency);
   renderMetrics("status", [
     ["Program", data.state.program_status_type],
     ["Quote Login", data.state.qot_logined],
@@ -1379,6 +1410,7 @@ async function loadDashboard(loadId) {
     host: $("host").value,
     port: $("port").value,
     market: $("market").value,
+    currency: assetCurrency(),
   });
 
   try {
@@ -1394,14 +1426,14 @@ async function loadDashboard(loadId) {
     currentDashboard = data;
     currentPositions = unavailablePositions(data.positions);
     renderDashboardData(data);
-    renderSignalsAndPositions();
+    renderAccountResearch();
     renderWatchlists(currentWatchlists);
     setMessage(`${data.position_count} positions`, "positive");
 
     const enrichedPositions = await loadMarketData(data.positions);
     if (loadId !== activeLoadId) return;
     currentPositions = enrichedPositions;
-    renderSignalsAndPositions();
+    renderAccountResearch();
     renderWatchlists(currentWatchlists);
   } catch (error) {
     if (loadId !== activeLoadId) return;
@@ -1451,7 +1483,7 @@ $("detail-privacy").addEventListener("click", togglePrivacyMode);
 document.querySelectorAll(".filter-button").forEach((button) => {
   button.addEventListener("click", () => {
     activeSignalFilter = button.dataset.filter;
-    renderSignalsAndPositions();
+    renderSignals();
   });
 });
 
@@ -1462,6 +1494,9 @@ $("watchlist-search").addEventListener("input", (event) => {
 
 $("watchlists-expand").addEventListener("click", () => setWatchlistExpansionMode("all-expanded"));
 $("watchlists-collapse").addEventListener("click", () => setWatchlistExpansionMode("all-collapsed"));
+$("asset-currency").addEventListener("change", () => {
+  loadOverview();
+});
 
 document.querySelectorAll("[data-page-target]").forEach((item) => {
   item.addEventListener("click", (event) => {
@@ -1488,8 +1523,9 @@ window.addEventListener("hashchange", () => {
   setActivePage(pageFromHash());
 });
 
-if (window.location.hash !== "#overview" && window.location.hash !== "#watchlists") {
+if (!appPages.some((page) => window.location.hash === `#${page}`)) {
   window.history.replaceState(null, "", "#overview");
 }
 setActivePage(pageFromHash());
+setAssetCurrencyOptions();
 loadAll();

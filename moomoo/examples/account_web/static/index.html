@@ -21,6 +21,7 @@
         <nav class="nav" aria-label="Dashboard pages">
           <a class="nav-item active" href="#overview" data-page-target="overview">Overview</a>
           <a class="nav-item" href="#watchlists" data-page-target="watchlists">Watchlists</a>
+          <a class="nav-item" href="#signals" data-page-target="signals">Signals</a>
         </nav>
 
         <div class="sidebar-footer">
@@ -47,7 +48,7 @@
 
         <main class="content">
           <div class="page-panel" data-page="overview">
-            <section id="overview" class="section-card">
+            <section id="overview" class="section-card compact">
               <div class="section-header">
                 <h2>OpenD</h2>
                 <span class="section-kicker">Runtime</span>
@@ -55,7 +56,7 @@
               <div id="status" class="metrics"></div>
             </section>
 
-            <section class="section-card">
+            <section class="section-card compact">
               <div class="section-header">
                 <h2>Account</h2>
                 <span class="section-kicker">FUTUAU REAL</span>
@@ -66,7 +67,15 @@
             <section id="assets" class="section-card strong">
               <div class="section-header">
                 <h2>Assets</h2>
-                <span class="section-kicker">Balance</span>
+                <div class="asset-actions">
+                  <span class="section-kicker">Balance</span>
+                  <label class="asset-currency-control">
+                    Currency
+                    <select id="asset-currency" aria-label="Asset currency">
+                      <option>USD</option>
+                    </select>
+                  </label>
+                </div>
               </div>
               <div id="assets-summary" class="metrics"></div>
             </section>
@@ -77,21 +86,6 @@
                 <span class="section-kicker">Cash split</span>
               </div>
               <div class="table-scroll"><table id="currency"></table></div>
-            </section>
-
-            <section id="signals" class="section-card">
-              <div class="section-header">
-                <h2>Signals</h2>
-                <span class="section-kicker">market-data-lab</span>
-              </div>
-              <div id="market-data-status" class="market-status muted">Waiting for positions</div>
-              <div class="signal-filters" aria-label="Signal filters">
-                <button class="filter-button active" type="button" data-filter="all">All</button>
-                <button class="filter-button" type="button" data-filter="Momentum">Momentum</button>
-                <button class="filter-button" type="button" data-filter="Risk Review">Risk</button>
-                <button class="filter-button" type="button" data-filter="Data Gap">Data Gap</button>
-              </div>
-              <div id="focus-list" class="focus-grid"></div>
             </section>
 
             <section id="positions" class="section-card">
@@ -125,6 +119,23 @@
               </div>
               <div id="watchlist-summary" class="watchlist-summary"></div>
               <div id="watchlists-list" class="watchlists-stack"></div>
+            </section>
+          </div>
+
+          <div class="page-panel" data-page="signals" hidden>
+            <section id="signals" class="section-card">
+              <div class="section-header">
+                <h2>Signals</h2>
+                <span class="section-kicker">market-data-lab</span>
+              </div>
+              <div id="market-data-status" class="market-status muted">Waiting for positions</div>
+              <div class="signal-filters" aria-label="Signal filters">
+                <button class="filter-button active" type="button" data-filter="all">All</button>
+                <button class="filter-button" type="button" data-filter="Momentum">Momentum</button>
+                <button class="filter-button" type="button" data-filter="Risk Review">Risk</button>
+                <button class="filter-button" type="button" data-filter="Data Gap">Data Gap</button>
+              </div>
+              <div id="focus-list" class="focus-grid"></div>
             </section>
           </div>
         </main>
