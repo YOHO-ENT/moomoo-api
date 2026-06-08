@@ -401,14 +401,30 @@ def test_watchlists_static_contract():
     assert 'id="watchlist-select"' not in index_html
     assert 'id="watchlist-table"' not in index_html
     assert 'id="watchlists-sync"' in index_html
+    assert 'id="watchlist-search"' in index_html
+    assert 'id="watchlists-expand"' in index_html
+    assert 'id="watchlists-collapse"' in index_html
     assert 'id="watchlists-list"' in index_html
+    assert 'id="detail-kicker"' in index_html
     assert index_html.index('data-page="watchlists"') < index_html.index('id="watchlists"')
     assert "let activePage" in app_js
+    assert "let watchlistSearchQuery" in app_js
+    assert "let watchlistExpansionMode" in app_js
+    assert "let activeDetailMode" in app_js
     assert "function pageFromHash()" in app_js
     assert "function setActivePage(page)" in app_js
     assert "let currentWatchlists" in app_js
     assert "function renderWatchlistTable(rows)" in app_js
     assert "function renderWatchlists(groups)" in app_js
+    assert "function visibleWatchlistGroups(groups)" in app_js
+    assert "function isWatchlistCollapsed(group, index)" in app_js
+    assert "function setWatchlistExpansionMode(mode)" in app_js
+    assert "function holdingStatusForSecurity(security)" in app_js
+    assert "function bindOpenWatchlistDetail(node, security)" in app_js
+    assert "function openWatchlistDetail(code)" in app_js
+    assert "function renderWatchlistDetail(security)" in app_js
+    assert "Held" in app_js
+    assert "Watchlist research" in app_js
     assert "function fetchMarketDataSnapshotsInBatches(codes)" in app_js
     assert "function watchlistsWithSnapshots(groups, snapshotsByCode)" in app_js
     assert "function setWatchlistsSyncing(syncing)" in app_js
@@ -423,8 +439,10 @@ def test_watchlists_static_contract():
     assert 'group_type: "CUSTOM"' in app_js
     assert ".page-panel" in style_css
     assert ".page-panel[hidden]" in style_css
+    assert ".watchlist-toolbar" in style_css
     assert ".watchlists-stack" in style_css
     assert ".watchlist-card" in style_css
+    assert ".watchlist-toggle" in style_css
 
 
 def test_account_web_remains_read_only_static_boundary():

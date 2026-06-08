@@ -113,6 +113,16 @@
                 </div>
               </div>
               <div id="watchlist-status" class="market-status muted">Waiting for OpenD</div>
+              <div class="watchlist-toolbar">
+                <label>
+                  Search
+                  <input id="watchlist-search" type="search" placeholder="List, code, name, ticker" autocomplete="off" />
+                </label>
+                <div class="watchlist-toolbar-actions" aria-label="Watchlist display controls">
+                  <button id="watchlists-expand" class="secondary-button" type="button">Expand all</button>
+                  <button id="watchlists-collapse" class="secondary-button" type="button">Collapse all</button>
+                </div>
+              </div>
               <div id="watchlist-summary" class="watchlist-summary"></div>
               <div id="watchlists-list" class="watchlists-stack"></div>
             </section>
@@ -125,7 +135,7 @@
     <aside id="position-detail" class="detail-drawer" aria-labelledby="detail-title" aria-hidden="true" hidden>
       <div class="detail-header">
         <div>
-          <div class="detail-kicker">Position research</div>
+          <div id="detail-kicker" class="detail-kicker">Position research</div>
           <h2 id="detail-title">Holding Detail</h2>
         </div>
         <div class="detail-actions">
