@@ -5,6 +5,7 @@ let privacyMode = true;
 let activeSignalFilter = "all";
 let currentDashboard = null;
 let currentPositions = [];
+let activeDetailCode = null;
 
 const numericColumns = new Set([
   "qty",
@@ -93,6 +94,11 @@ function formatPercent(value) {
   return `${(value * 100).toFixed(1)}%`;
 }
 
+function formatReturn(value) {
+  if (!numberLike(value)) return "N/A";
+  return formatPercent(value);
+}
+
 function valueTone(value, key = "") {
   if (!numberLike(value)) return "";
   if (!["pl_val", "pl_ratio"].includes(key)) return "";
@@ -109,6 +115,19 @@ function setMessage(label, tone = "muted") {
 function setMarketDataStatus(label, tone = "muted") {
   $("market-data-status").className = `market-status ${tone}`;
   $("market-data-status").textContent = label;
+}
+
+function updatePrivacyButtons() {
+  const label = privacyMode ? "Reveal" : "Hide";
+  $("privacy-toggle").textContent = label;
+  $("detail-privacy").textContent = label;
+}
+
+function togglePrivacyMode() {
+  privacyMode = !privacyMode;
+  updatePrivacyButtons();
+  if (currentDashboard) renderDashboardData(currentDashboard);
+  renderSignalsAndPositions();
 }
 
 function metric(name, value, key = "") {
@@ -186,6 +205,61 @@ function renderTable(id, rows, columns) {
   table.append(head, body);
 }
 
+function bindOpenDetail(node, position) {
+  const code = position && position.code;
+  if (!code) return;
+
+  node.classList.add("actionable");
+  node.tabIndex = 0;
+  node.setAttribute("role", "button");
+  node.setAttribute("aria-label", `Open ${code} position detail`);
+  node.addEventListener("click", () => openPositionDetail(code));
+  node.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      openPositionDetail(code);
+    }
+  });
+}
+
+function renderPositionsTable(rows) {
+  const table = $("positions-table");
+  table.replaceChildren();
+
+  if (!rows || rows.length === 0) {
+    const body = document.createElement("tbody");
+    const row = body.insertRow();
+    const cell = row.insertCell();
+    cell.className = "muted";
+    cell.textContent = "No rows";
+    table.appendChild(body);
+    return;
+  }
+
+  const head = document.createElement("thead");
+  const headerRow = head.insertRow();
+  positionColumns.forEach((column) => {
+    const header = document.createElement("th");
+    header.textContent = column;
+    if (numericColumns.has(column)) header.className = "numeric";
+    headerRow.appendChild(header);
+  });
+
+  const body = document.createElement("tbody");
+  rows.forEach((source) => {
+    const row = body.insertRow();
+    bindOpenDetail(row, source);
+    positionColumns.forEach((column) => {
+      const value = source[column];
+      const cell = row.insertCell();
+      cell.className = cellClass(column, value);
+      cell.textContent = formatValue(value, column);
+    });
+  });
+
+  table.append(head, body);
+}
+
 function uniqueCodes(positions) {
   const seen = new Set();
   const codes = [];
@@ -237,6 +311,7 @@ function withMarketData(position, snapshot) {
     md_liquidity_score: snapshot ? snapshot.liquidity_score : null,
     md_return_1m: snapshot ? snapshot.return_1m : null,
     md_return_3m: snapshot ? snapshot.return_3m : null,
+    market_data_url: snapshot ? snapshot.market_data_url : null,
   };
   const signal = classifySignal(enriched);
   return { ...enriched, ...signal };
@@ -254,6 +329,7 @@ function unavailablePositions(positions) {
       relative_strength_vs_spy: { status: "unavailable" },
       volume_signal: { status: "unavailable" },
       data_quality: { status: "unavailable" },
+      market_data_url: null,
     }),
   );
 }
@@ -357,6 +433,139 @@ function chip(label, tone = "muted") {
   return node;
 }
 
+function selectedPosition() {
+  if (!activeDetailCode) return null;
+  return currentPositions.find((position) => position.code === activeDetailCode) || null;
+}
+
+function detailItem(label, value, key = "", formatter = null) {
+  const item = document.createElement("div");
+  item.className = "detail-item";
+
+  const name = document.createElement("div");
+  name.className = "detail-label";
+  name.textContent = label;
+
+  const display = document.createElement("div");
+  display.className = `detail-value${valueTone(value, key)}`;
+  display.textContent = formatter ? formatter(value) : formatValue(value, key);
+
+  item.append(name, display);
+  return item;
+}
+
+function detailSection(title, children) {
+  const section = document.createElement("section");
+  section.className = "detail-section";
+
+  const heading = document.createElement("h3");
+  heading.textContent = title;
+
+  const body = document.createElement("div");
+  body.className = "detail-grid";
+  body.append(...children);
+
+  section.append(heading, body);
+  return section;
+}
+
+function detailChipList(items) {
+  const list = document.createElement("div");
+  list.className = "detail-chips";
+  items.filter(Boolean).forEach((item) => {
+    if (item instanceof Node) {
+      list.appendChild(item);
+    } else {
+      list.appendChild(chip(item));
+    }
+  });
+  return list;
+}
+
+function marketDataLink(position) {
+  if (!position.market_data_url) {
+    const unavailable = document.createElement("span");
+    unavailable.className = "detail-link-disabled";
+    unavailable.textContent = "Market Data Lab link unavailable";
+    return unavailable;
+  }
+
+  const link = document.createElement("a");
+  link.className = "detail-link";
+  link.href = position.market_data_url;
+  link.target = "_blank";
+  link.rel = "noreferrer";
+  link.textContent = "Open Market Data Lab";
+  return link;
+}
+
+function renderPositionDetail(position) {
+  const content = $("detail-content");
+  if (!position) {
+    $("detail-title").textContent = "Holding Detail";
+    content.replaceChildren();
+    return;
+  }
+
+  $("detail-title").textContent = position.code || "Holding Detail";
+
+  const summary = detailSection("Holding Summary", [
+    detailItem("Name", position.stock_name || position.md_ticker),
+    detailItem("Quantity", position.qty, "qty"),
+    detailItem("Market Value", position.market_val, "market_val"),
+    detailItem("P/L", position.pl_val, "pl_val"),
+    detailItem("P/L Ratio", position.pl_ratio, "pl_ratio"),
+    detailItem("Side", position.position_side),
+  ]);
+
+  const signal = detailSection("Signal Review", [
+    detailChipList([chip(position.signal || "Neutral", signalTone(position.signal)), ...(position.signal_reasons || [])]),
+    detailItem("Priority", position.signal_priority),
+  ]);
+
+  const market = detailSection("Market Data Lab Snapshot", [
+    detailItem("Ticker", position.md_ticker),
+    detailItem("Price", position.md_price, "md_price"),
+    detailItem("Trend", position.md_trend),
+    detailItem("RSI 14", position.md_rsi14, "md_rsi14"),
+    detailItem("Breakout", position.md_breakout_status),
+    detailItem("Relative Strength", position.md_relative_strength),
+    detailItem("Volume Signal", position.md_volume_status),
+    detailItem("Volume Ratio", position.md_volume_ratio),
+    detailItem("1M Return", position.md_return_1m, "", formatReturn),
+    detailItem("3M Return", position.md_return_3m, "", formatReturn),
+    detailItem("As Of", position.md_as_of),
+  ]);
+
+  const quality = detailSection("Data Quality", [
+    detailItem("Quality", position.md_quality),
+    detailItem("Mapped Ticker", position.md_ticker),
+    detailItem("Snapshot Date", position.md_as_of),
+    marketDataLink(position),
+  ]);
+
+  content.replaceChildren(summary, signal, market, quality);
+}
+
+function setDetailVisible(visible) {
+  $("detail-backdrop").hidden = !visible;
+  $("position-detail").hidden = !visible;
+  $("position-detail").setAttribute("aria-hidden", visible ? "false" : "true");
+  document.body.classList.toggle("detail-open", visible);
+}
+
+function openPositionDetail(code) {
+  activeDetailCode = code;
+  renderPositionDetail(selectedPosition());
+  setDetailVisible(true);
+}
+
+function closePositionDetail() {
+  activeDetailCode = null;
+  setDetailVisible(false);
+  renderPositionDetail(null);
+}
+
 function renderFocusList() {
   const target = $("focus-list");
   const positions = filteredPositions().slice(0, 8);
@@ -371,6 +580,7 @@ function renderFocusList() {
   const cards = positions.map((position) => {
     const card = document.createElement("article");
     card.className = "focus-card";
+    bindOpenDetail(card, position);
 
     const top = document.createElement("div");
     top.className = "focus-card-top";
@@ -417,7 +627,15 @@ function updateFilterButtons() {
 function renderSignalsAndPositions() {
   updateFilterButtons();
   renderFocusList();
-  renderTable("positions-table", filteredPositions(), positionColumns);
+  renderPositionsTable(filteredPositions());
+  if (activeDetailCode) {
+    const position = selectedPosition();
+    if (position) {
+      renderPositionDetail(position);
+    } else {
+      closePositionDetail();
+    }
+  }
 }
 
 function renderDashboardData(data) {
@@ -510,18 +728,21 @@ $("controls").addEventListener("submit", (event) => {
   loadDashboard();
 });
 
-$("privacy-toggle").addEventListener("click", () => {
-  privacyMode = !privacyMode;
-  $("privacy-toggle").textContent = privacyMode ? "Reveal" : "Hide";
-  if (currentDashboard) renderDashboardData(currentDashboard);
-  renderSignalsAndPositions();
-});
+$("privacy-toggle").addEventListener("click", togglePrivacyMode);
+$("detail-privacy").addEventListener("click", togglePrivacyMode);
 
 document.querySelectorAll(".filter-button").forEach((button) => {
   button.addEventListener("click", () => {
     activeSignalFilter = button.dataset.filter;
     renderSignalsAndPositions();
   });
+});
+
+$("detail-close").addEventListener("click", closePositionDetail);
+$("detail-backdrop").addEventListener("click", closePositionDetail);
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && activeDetailCode) closePositionDetail();
 });
 
 loadDashboard();

@@ -154,6 +154,49 @@ def test_privacy_defaults_and_static_files_present():
     assert os.path.exists(os.path.join(root, "moomoo/examples/account_web/static/style.css"))
 
 
+def test_position_detail_drawer_static_contract():
+    root = os.path.dirname(os.path.dirname(__file__))
+    index_html = open(os.path.join(root, "moomoo/examples/account_web/static/index.html"), encoding="utf-8").read()
+    app_js = open(os.path.join(root, "moomoo/examples/account_web/static/app.js"), encoding="utf-8").read()
+    style_css = open(os.path.join(root, "moomoo/examples/account_web/static/style.css"), encoding="utf-8").read()
+
+    assert 'id="position-detail"' in index_html
+    assert 'id="detail-backdrop"' in index_html
+    assert 'id="detail-privacy"' in index_html
+    assert "let activeDetailCode = null;" in app_js
+    assert "function togglePrivacyMode()" in app_js
+    assert "function selectedPosition()" in app_js
+    assert "function renderPositionDetail(position)" in app_js
+    assert "function openPositionDetail(code)" in app_js
+    assert "function closePositionDetail()" in app_js
+    assert "function renderPositionsTable(rows)" in app_js
+    assert "market_data_url" in app_js
+    assert ".detail-drawer" in style_css
+    assert "max-width: min(440px, 100vw)" in style_css
+
+
+def test_account_web_remains_read_only_static_boundary():
+    root = os.path.dirname(os.path.dirname(__file__))
+    account_web_root = os.path.join(root, "moomoo/examples/account_web")
+    forbidden = [
+        "unlock_trade(",
+        "place_order(",
+        "modify_order(",
+        "cancel_all_order(",
+        "password",
+        "pwd_unlock",
+        "unlock_pwd",
+    ]
+
+    for directory, _, filenames in os.walk(account_web_root):
+        for filename in filenames:
+            if not filename.endswith((".py", ".js", ".html", ".css")):
+                continue
+            content = open(os.path.join(directory, filename), encoding="utf-8").read()
+            for needle in forbidden:
+                assert needle not in content
+
+
 def test_mask_account_id():
     assert service.mask_account_id("1234567890") == "1234...7890"
     assert service.mask_account_id("12345678") == "********"
