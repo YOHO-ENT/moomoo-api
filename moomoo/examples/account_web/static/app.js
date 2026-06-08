@@ -1,11 +1,19 @@
 const $ = (id) => document.getElementById(id);
 
 let activeLoadId = 0;
+let activeWatchlistsLoadId = 0;
+let activePage = "overview";
 let privacyMode = true;
 let activeSignalFilter = "all";
 let currentDashboard = null;
 let currentPositions = [];
+let currentWatchlistsPayload = null;
+let currentWatchlists = [];
 let activeDetailCode = null;
+let activeWatchlistDataLoadId = 0;
+let watchlistsLoaded = false;
+let currentWatchlistsParamsKey = null;
+let watchlistsSyncing = false;
 
 const numericColumns = new Set([
   "qty",
@@ -67,6 +75,24 @@ const positionColumns = [
   "md_quality",
 ];
 
+const watchlistColumns = [
+  "code",
+  "name",
+  "md_ticker",
+  "md_price",
+  "md_trend",
+  "md_rsi14",
+  "md_quality",
+  "md_as_of",
+  "market_data_url",
+];
+
+const columnLabels = {
+  market_data_url: "market_data",
+};
+
+const WATCHLIST_SNAPSHOT_BATCH_SIZE = 80;
+
 function text(value) {
   if (value === null || value === undefined || value === "") return "N/A";
   return String(value);
@@ -117,6 +143,37 @@ function setMarketDataStatus(label, tone = "muted") {
   $("market-data-status").textContent = label;
 }
 
+function setWatchlistStatus(label, tone = "muted") {
+  $("watchlist-status").className = `market-status ${tone}`;
+  $("watchlist-status").textContent = label;
+}
+
+function setWatchlistsSyncing(syncing) {
+  watchlistsSyncing = syncing;
+  const button = $("watchlists-sync");
+  button.disabled = syncing;
+  button.textContent = syncing ? "Syncing..." : "Sync from OpenD";
+}
+
+function pageFromHash() {
+  const page = window.location.hash.replace("#", "").trim();
+  return ["overview", "watchlists"].includes(page) ? page : "overview";
+}
+
+function setActivePage(page) {
+  activePage = ["overview", "watchlists"].includes(page) ? page : "overview";
+
+  document.querySelectorAll("[data-page]").forEach((panel) => {
+    panel.hidden = panel.dataset.page !== activePage;
+  });
+
+  document.querySelectorAll("[data-page-target]").forEach((item) => {
+    item.classList.toggle("active", item.dataset.pageTarget === activePage);
+  });
+
+  if (activePage === "watchlists") loadWatchlistsPage();
+}
+
 function updatePrivacyButtons() {
   const label = privacyMode ? "Reveal" : "Hide";
   $("privacy-toggle").textContent = label;
@@ -128,6 +185,7 @@ function togglePrivacyMode() {
   updatePrivacyButtons();
   if (currentDashboard) renderDashboardData(currentDashboard);
   renderSignalsAndPositions();
+  renderWatchlists(currentWatchlists);
 }
 
 function metric(name, value, key = "") {
@@ -186,7 +244,7 @@ function renderTable(id, rows, columns) {
   const headerRow = head.insertRow();
   columns.forEach((column) => {
     const header = document.createElement("th");
-    header.textContent = column;
+    header.textContent = columnLabels[column] || column;
     if (numericColumns.has(column)) header.className = "numeric";
     headerRow.appendChild(header);
   });
@@ -203,6 +261,67 @@ function renderTable(id, rows, columns) {
   });
 
   table.append(head, body);
+}
+
+function renderMarketDataLinkCell(cell, url) {
+  if (!url) {
+    cell.className = "muted";
+    cell.textContent = "N/A";
+    return;
+  }
+
+  const link = document.createElement("a");
+  link.className = "watchlist-link";
+  link.href = url;
+  link.target = "_blank";
+  link.rel = "noreferrer";
+  link.textContent = "Open";
+  cell.appendChild(link);
+}
+
+function renderWatchlistTable(rows) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "table-scroll";
+  const table = document.createElement("table");
+
+  if (!rows || rows.length === 0) {
+    const body = document.createElement("tbody");
+    const row = body.insertRow();
+    const cell = row.insertCell();
+    cell.className = "muted";
+    cell.textContent = "No securities";
+    table.appendChild(body);
+    wrapper.appendChild(table);
+    return wrapper;
+  }
+
+  const head = document.createElement("thead");
+  const headerRow = head.insertRow();
+  watchlistColumns.forEach((column) => {
+    const header = document.createElement("th");
+    header.textContent = columnLabels[column] || column;
+    if (numericColumns.has(column)) header.className = "numeric";
+    headerRow.appendChild(header);
+  });
+
+  const body = document.createElement("tbody");
+  rows.forEach((source) => {
+    const row = body.insertRow();
+    watchlistColumns.forEach((column) => {
+      const value = source[column];
+      const cell = row.insertCell();
+      cell.className = cellClass(column, value);
+      if (column === "market_data_url") {
+        renderMarketDataLinkCell(cell, value);
+      } else {
+        cell.textContent = formatValue(value, column);
+      }
+    });
+  });
+
+  table.append(head, body);
+  wrapper.appendChild(table);
+  return wrapper;
 }
 
 function bindOpenDetail(node, position) {
@@ -317,6 +436,19 @@ function withMarketData(position, snapshot) {
   return { ...enriched, ...signal };
 }
 
+function withWatchlistMarketData(security, snapshot) {
+  return {
+    ...security,
+    md_ticker: snapshot ? snapshot.ticker : null,
+    md_price: snapshot ? snapshot.price : null,
+    md_trend: snapshot ? snapshot.trend : "unavailable",
+    md_rsi14: snapshot ? snapshot.rsi14 : null,
+    md_as_of: snapshot ? snapshot.as_of : null,
+    md_quality: snapshotQuality(snapshot),
+    market_data_url: snapshot ? snapshot.market_data_url : null,
+  };
+}
+
 function unavailablePositions(positions) {
   return positions.map((position) =>
     withMarketData(position, {
@@ -328,6 +460,20 @@ function unavailablePositions(positions) {
       breakout_status: "unavailable",
       relative_strength_vs_spy: { status: "unavailable" },
       volume_signal: { status: "unavailable" },
+      data_quality: { status: "unavailable" },
+      market_data_url: null,
+    }),
+  );
+}
+
+function unavailableWatchlistSecurities(securities) {
+  return securities.map((security) =>
+    withWatchlistMarketData(security, {
+      ticker: null,
+      price: null,
+      trend: "unavailable",
+      rsi14: null,
+      as_of: null,
       data_quality: { status: "unavailable" },
       market_data_url: null,
     }),
@@ -638,6 +784,271 @@ function renderSignalsAndPositions() {
   }
 }
 
+function renderWatchlistSummary() {
+  const target = $("watchlist-summary");
+  const payload = currentWatchlistsPayload;
+  const partialErrors = currentWatchlists.filter((group) => group.error).length;
+  const items = [];
+
+  if (payload) {
+    items.push(chip(`${payload.group_count} lists`));
+    items.push(chip(`${payload.security_count} securities`));
+    items.push(chip(payload.group_type));
+    items.push(chip(payload.source || "cache"));
+    if (payload.synced_at) items.push(chip(`synced ${payload.synced_at}`));
+  }
+
+  if (partialErrors > 0) items.push(chip(`${partialErrors} partial errors`, "warning"));
+
+  target.replaceChildren(...items);
+}
+
+function watchlistStatusText(group) {
+  if (group.error) return "partial error";
+  const count = group.count || (group.securities || []).length;
+  return `${count} securities`;
+}
+
+function renderWatchlistCard(group, index) {
+  const card = document.createElement("article");
+  card.className = "watchlist-card";
+
+  const header = document.createElement("div");
+  header.className = "watchlist-card-header";
+
+  const titleBlock = document.createElement("div");
+  titleBlock.className = "watchlist-card-title";
+
+  const title = document.createElement("h3");
+  title.textContent = group.group_name || `Watchlist ${index + 1}`;
+
+  const meta = document.createElement("div");
+  meta.className = "watchlist-card-meta";
+  meta.append(
+    chip(group.group_type || "CUSTOM"),
+    chip(watchlistStatusText(group), group.error ? "warning" : "muted"),
+  );
+
+  titleBlock.append(title, meta);
+  header.appendChild(titleBlock);
+  card.appendChild(header);
+
+  if (group.error) {
+    const error = document.createElement("div");
+    error.className = "watchlist-error";
+    error.textContent = group.error;
+    card.appendChild(error);
+  }
+
+  card.appendChild(renderWatchlistTable(group.securities || []));
+  return card;
+}
+
+function renderWatchlists(groups) {
+  const target = $("watchlists-list");
+  renderWatchlistSummary();
+
+  if (!groups || groups.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "watchlist-empty";
+    empty.textContent =
+      currentWatchlistsPayload?.source === "cache_missing"
+        ? "No cache yet. Sync from OpenD to load your watchlists."
+        : "No custom watchlists";
+    target.replaceChildren(empty);
+    return;
+  }
+
+  target.replaceChildren(...groups.map((group, index) => renderWatchlistCard(group, index)));
+}
+
+function renderWatchlistCacheStatus(payload) {
+  if (!payload) return;
+  if (payload.source === "cache_missing") {
+    setWatchlistStatus("No cache yet. Click Sync from OpenD to create one.", "warning");
+    return;
+  }
+  if (payload.source === "cache_error") {
+    setWatchlistStatus(payload.error || "Watchlists cache error", "error");
+    return;
+  }
+  if (payload.source === "cache") {
+    setWatchlistStatus(
+      payload.synced_at ? `Loaded from cache, synced ${payload.synced_at}` : "Loaded from cache",
+      "positive",
+    );
+    return;
+  }
+  if (payload.source === "opend_sync") {
+    setWatchlistStatus(
+      payload.synced_at ? `Synced from OpenD at ${payload.synced_at}` : "Synced from OpenD",
+      "positive",
+    );
+  }
+}
+
+async function fetchMarketDataSnapshots(codes) {
+  const params = new URLSearchParams({ codes: codes.join(",") });
+  const response = await fetch(`/api/market-data/snapshots?${params.toString()}`);
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail);
+  }
+  return response.json();
+}
+
+async function fetchMarketDataSnapshotsInBatches(codes) {
+  const payloads = [];
+  for (let index = 0; index < codes.length; index += WATCHLIST_SNAPSHOT_BATCH_SIZE) {
+    payloads.push(await fetchMarketDataSnapshots(codes.slice(index, index + WATCHLIST_SNAPSHOT_BATCH_SIZE)));
+  }
+  return payloads;
+}
+
+function allWatchlistCodes(groups) {
+  const securities = groups.flatMap((group) => (group.error ? [] : group.securities || []));
+  return uniqueCodes(securities);
+}
+
+function watchlistsWithUnavailableMarketData(groups) {
+  return groups.map((group) => ({
+    ...group,
+    securities: group.error ? [] : unavailableWatchlistSecurities(group.securities || []),
+  }));
+}
+
+function watchlistsWithSnapshots(groups, snapshotsByCode) {
+  return groups.map((group) => ({
+    ...group,
+    securities: group.error
+      ? []
+      : (group.securities || []).map((security) =>
+          withWatchlistMarketData(security, snapshotsByCode.get(security.code)),
+        ),
+  }));
+}
+
+function snapshotsBySourceCode(payloads) {
+  return new Map(
+    payloads.flatMap((payload) => payload.results || []).map((snapshot) => [snapshot.source_code, snapshot]),
+  );
+}
+
+function renderWatchlistMarketDataStatus(payloads) {
+  const requested = payloads.reduce((total, payload) => total + (payload.requested_count || 0), 0);
+  const mapped = payloads.reduce((total, payload) => total + (payload.mapped_count || 0), 0);
+  const unavailable = payloads.find((payload) => !payload.available);
+  const partialErrors = currentWatchlists.filter((group) => group.error).length;
+
+  if (unavailable) {
+    setWatchlistStatus(unavailable.error || "Market Data Lab unavailable", "error");
+    return;
+  }
+
+  const suffix = partialErrors ? `, ${partialErrors} partial errors` : "";
+  setWatchlistStatus(
+    `${currentWatchlists.length} lists, ${mapped}/${requested} mapped via ${payloads[0]?.api_url || "market-data-lab"}${suffix}`,
+    partialErrors ? "warning" : "positive",
+  );
+}
+
+async function enrichWatchlistsMarketData(sourceGroups) {
+  const dataLoadId = ++activeWatchlistDataLoadId;
+  const codes = allWatchlistCodes(sourceGroups);
+
+  if (codes.length === 0) {
+    setWatchlistStatus(sourceGroups.length === 0 ? "No custom watchlists" : "No securities to enrich", "muted");
+    return;
+  }
+
+  setWatchlistStatus(`Loading market data for ${codes.length} unique securities...`, "muted");
+
+  try {
+    const payloads = await fetchMarketDataSnapshotsInBatches(codes);
+    if (dataLoadId !== activeWatchlistDataLoadId) return;
+
+    currentWatchlists = watchlistsWithSnapshots(sourceGroups, snapshotsBySourceCode(payloads));
+    renderWatchlists(currentWatchlists);
+    renderWatchlistMarketDataStatus(payloads);
+  } catch (error) {
+    if (dataLoadId !== activeWatchlistDataLoadId) return;
+    currentWatchlists = watchlistsWithUnavailableMarketData(sourceGroups);
+    renderWatchlists(currentWatchlists);
+    setWatchlistStatus(error.message, "error");
+  }
+}
+
+async function loadWatchlists(loadId) {
+  setWatchlistStatus("Loading watchlists cache...", "muted");
+  const params = new URLSearchParams({
+    host: $("host").value,
+    port: $("port").value,
+    group_type: "CUSTOM",
+  });
+
+  try {
+    const response = await fetch(`/api/watchlists?${params.toString()}`);
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(detail);
+    }
+
+    const payload = await response.json();
+    if (loadId !== activeWatchlistsLoadId) return;
+
+    currentWatchlistsPayload = payload;
+    const sourceGroups = payload.groups || [];
+    currentWatchlists = watchlistsWithUnavailableMarketData(sourceGroups);
+    renderWatchlists(currentWatchlists);
+    renderWatchlistCacheStatus(payload);
+    if (sourceGroups.length === 0) return;
+    await enrichWatchlistsMarketData(sourceGroups);
+  } catch (error) {
+    if (loadId !== activeWatchlistsLoadId) return;
+    watchlistsLoaded = false;
+    currentWatchlistsPayload = null;
+    currentWatchlists = [];
+    renderWatchlists(currentWatchlists);
+    setWatchlistStatus(error.message, "error");
+  }
+}
+
+async function syncWatchlistsFromOpenD() {
+  const loadId = ++activeWatchlistsLoadId;
+  setWatchlistsSyncing(true);
+  setWatchlistStatus("Syncing from OpenD... this may take about 1-2 minutes.", "muted");
+  const params = new URLSearchParams({
+    host: $("host").value,
+    port: $("port").value,
+    group_type: "CUSTOM",
+  });
+
+  try {
+    const response = await fetch(`/api/watchlists/sync?${params.toString()}`, { method: "POST" });
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(detail);
+    }
+
+    const payload = await response.json();
+    if (loadId !== activeWatchlistsLoadId) return;
+
+    watchlistsLoaded = true;
+    currentWatchlistsParamsKey = watchlistsParamsKey();
+    currentWatchlistsPayload = payload;
+    const sourceGroups = payload.groups || [];
+    currentWatchlists = watchlistsWithUnavailableMarketData(sourceGroups);
+    renderWatchlists(currentWatchlists);
+    renderWatchlistCacheStatus(payload);
+    if (sourceGroups.length > 0) await enrichWatchlistsMarketData(sourceGroups);
+  } catch (error) {
+    if (loadId !== activeWatchlistsLoadId) return;
+    setWatchlistStatus(error.message, "error");
+  } finally {
+    if (loadId === activeWatchlistsLoadId) setWatchlistsSyncing(false);
+  }
+}
+
 function renderDashboardData(data) {
   renderMetrics("status", [
     ["Program", data.state.program_status_type],
@@ -668,16 +1079,9 @@ async function loadMarketData(positions) {
   }
 
   setMarketDataStatus("Loading market data...", "muted");
-  const params = new URLSearchParams({ codes: codes.join(",") });
 
   try {
-    const response = await fetch(`/api/market-data/snapshots?${params.toString()}`);
-    if (!response.ok) {
-      const detail = await response.text();
-      throw new Error(detail);
-    }
-
-    const payload = await response.json();
+    const payload = await fetchMarketDataSnapshots(codes);
     const snapshotsByCode = new Map(payload.results.map((snapshot) => [snapshot.source_code, snapshot]));
     renderMarketDataStatus(payload);
     return positions.map((position) => withMarketData(position, snapshotsByCode.get(position.code)));
@@ -687,8 +1091,7 @@ async function loadMarketData(positions) {
   }
 }
 
-async function loadDashboard() {
-  const loadId = ++activeLoadId;
+async function loadDashboard(loadId) {
   setMessage("Loading...", "muted");
   setMarketDataStatus("Waiting for positions", "muted");
   const params = new URLSearchParams({
@@ -723,9 +1126,40 @@ async function loadDashboard() {
   }
 }
 
+function loadAll() {
+  loadOverview();
+  if (activePage === "watchlists") loadWatchlistsPage();
+}
+
+function loadOverview() {
+  const loadId = ++activeLoadId;
+  loadDashboard(loadId);
+}
+
+function watchlistsParamsKey() {
+  return `${$("host").value}:${$("port").value}:CUSTOM`;
+}
+
+function loadWatchlistsPage(options = {}) {
+  const key = watchlistsParamsKey();
+  if (watchlistsLoaded && !options.force && currentWatchlistsParamsKey === key) return;
+  watchlistsLoaded = true;
+  currentWatchlistsParamsKey = key;
+  const loadId = ++activeWatchlistsLoadId;
+  loadWatchlists(loadId);
+}
+
+function refreshActivePage() {
+  if (activePage === "watchlists") {
+    loadWatchlistsPage({ force: true });
+    return;
+  }
+  loadOverview();
+}
+
 $("controls").addEventListener("submit", (event) => {
   event.preventDefault();
-  loadDashboard();
+  refreshActivePage();
 });
 
 $("privacy-toggle").addEventListener("click", togglePrivacyMode);
@@ -738,6 +1172,20 @@ document.querySelectorAll(".filter-button").forEach((button) => {
   });
 });
 
+document.querySelectorAll("[data-page-target]").forEach((item) => {
+  item.addEventListener("click", (event) => {
+    event.preventDefault();
+    const target = item.dataset.pageTarget;
+    if (window.location.hash === `#${target}`) {
+      setActivePage(target);
+    } else {
+      window.location.hash = target;
+    }
+  });
+});
+
+$("watchlists-sync").addEventListener("click", syncWatchlistsFromOpenD);
+
 $("detail-close").addEventListener("click", closePositionDetail);
 $("detail-backdrop").addEventListener("click", closePositionDetail);
 
@@ -745,4 +1193,12 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && activeDetailCode) closePositionDetail();
 });
 
-loadDashboard();
+window.addEventListener("hashchange", () => {
+  setActivePage(pageFromHash());
+});
+
+if (window.location.hash !== "#overview" && window.location.hash !== "#watchlists") {
+  window.history.replaceState(null, "", "#overview");
+}
+setActivePage(pageFromHash());
+loadAll();

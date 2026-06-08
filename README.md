@@ -153,6 +153,10 @@ Open `http://127.0.0.1:8501` in your browser while OpenD is running and logged
 in. The JSON API is available at `/api/dashboard`; the default connection is
 `127.0.0.1:11111` with `security_firm=FUTUAU`.
 
+The browser UI is split into two local pages. `Overview` shows OpenD status,
+account assets, Signals, and Positions. `Watchlists` is a separate page for
+your moomoo account watchlists, keeping the account view compact.
+
 The dashboard defaults to privacy mode in the browser. Asset balances, cash,
 position quantities, costs, market value, and P/L are hidden until you click
 `Reveal` locally. Account IDs remain masked by the API.
@@ -203,6 +207,37 @@ market-data columns show `unavailable`.
 The Signals section ranks current holdings into `Momentum`, `Breakout Watch`,
 `Risk Review`, `Protect Gains`, `Data Gap`, and `Neutral` using the read-only
 position data plus Market Data Lab snapshots.
+
+### Watchlists
+
+The local dashboard can also show your moomoo account watchlists, but it reads
+from a local cache by default. This avoids repeatedly calling OpenD and hitting
+the watchlist detail limit (`10 times / 30 seconds`). The browser's
+`Watchlists` page shows all cached user-created lists in OpenD order, and each
+list can be enriched with the same read-only Market Data Lab snapshots used by
+the Positions and Signals views.
+
+Use `Sync from OpenD` after you create, rename, delete, or edit lists in moomoo.
+The sync is intentionally slow because it waits between list-detail requests,
+then overwrites the local cache.
+
+The JSON endpoint is `/api/watchlists?group_type=CUSTOM`; it only reads the
+cache and returns `source="cache"`, `source="cache_missing"`, or
+`source="cache_error"`. Manual sync uses `POST /api/watchlists/sync` and
+returns `source="opend_sync"`. Supported `group_type` values are `CUSTOM`,
+`ALL`, and `SYSTEM`, though the UI uses `CUSTOM`.
+
+The default cache file is:
+
+```text
+~/.moomoo-api/account_web/watchlists_cache.json
+```
+
+Set `MOOMOO_ACCOUNT_WEB_CACHE_DIR` to store that cache somewhere else. The cache
+contains only watchlist names, types, securities, and `synced_at`; it does not
+store assets, positions, trading data, or credentials. Watchlists remain
+read-only: the dashboard does not create, rename, delete, or modify watchlists,
+and it does not send watchlist membership back to Market Data Lab.
 
 ### GUI development checks
 

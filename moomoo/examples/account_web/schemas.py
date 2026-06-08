@@ -34,3 +34,14 @@ class MarketDataSnapshotsPayload(BaseModel):
     count: int
     results: List[Dict[str, Any]]
     error: Any = None
+
+
+class WatchlistsPayload(BaseModel):
+    source: str
+    synced_at: Any = None
+    cache_path: str
+    group_type: str
+    group_count: int
+    security_count: int
+    groups: List[Dict[str, Any]]
+    error: Any = None

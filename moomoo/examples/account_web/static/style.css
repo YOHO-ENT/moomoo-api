@@ -220,6 +220,11 @@ button:hover {
   background: color-mix(in srgb, var(--color-accent) 88%, white);
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
 .secondary-button,
 .filter-button {
   border-color: var(--color-border);
@@ -240,6 +245,16 @@ button:hover {
   gap: 16px;
   margin: 0 auto;
   padding: 24px;
+}
+
+.page-panel {
+  display: grid;
+  min-width: 0;
+  gap: 16px;
+}
+
+.page-panel[hidden] {
+  display: none;
 }
 
 .section-card {
@@ -436,6 +451,107 @@ tbody tr:last-child td {
 .market-status.error {
   border-color: color-mix(in srgb, var(--color-negative) 35%, transparent);
   color: var(--color-negative);
+}
+
+.market-status.warning {
+  border-color: color-mix(in srgb, var(--color-tool-call) 35%, transparent);
+  color: var(--color-tool-call);
+}
+
+.watchlist-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+#watchlists-sync {
+  height: 34px;
+  padding: 0 12px;
+}
+
+.watchlist-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+  min-width: 0;
+  min-height: 38px;
+  margin: 12px 0;
+}
+
+.watchlists-stack {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+}
+
+.watchlist-card,
+.watchlist-empty {
+  min-width: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-background);
+}
+
+.watchlist-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.watchlist-empty {
+  padding: 14px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.watchlist-card-header,
+.watchlist-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.watchlist-card-header {
+  justify-content: space-between;
+}
+
+.watchlist-card-title {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+}
+
+.watchlist-card-title h3 {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text-primary);
+  font-size: 14px;
+  font-weight: 750;
+  letter-spacing: 0;
+}
+
+.watchlist-error {
+  border: 1px solid color-mix(in srgb, var(--color-tool-call) 35%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-tool-call) 9%, transparent);
+  padding: 10px 12px;
+  color: var(--color-tool-call);
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+
+.watchlist-link {
+  color: var(--color-accent);
+  font-weight: 750;
+  text-decoration: none;
+}
+
+.watchlist-link:hover {
+  color: color-mix(in srgb, var(--color-accent) 82%, white);
 }
 
 .signal-filters {
