@@ -243,6 +243,7 @@ button:hover {
 }
 
 .section-card {
+  min-width: 0;
   border: 1px solid var(--color-border);
   border-radius: 8px;
   background: color-mix(in srgb, var(--color-surface) 72%, transparent);
@@ -545,6 +546,12 @@ tbody tr:last-child td {
 .signal-cell {
   color: var(--color-accent);
   font-weight: 750;
+}
+
+@media (max-width: 1100px) {
+  .title-block {
+    min-width: 0;
+  }
 }
 
 @media (max-width: 980px) {
