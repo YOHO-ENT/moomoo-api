@@ -2,7 +2,9 @@
 """Tests for the local read-only account dashboard."""
 
 import os
+from contextlib import contextmanager
 
+import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
@@ -39,6 +41,32 @@ class FakeClient(object):
 
     def close(self):
         self.closed = True
+
+
+class FakeWatchlistQuoteContext(object):
+    def __init__(self):
+        self.group_type = None
+        self.security_requests = []
+
+    def get_user_security_group(self, group_type):
+        self.group_type = group_type
+        return service.ft.RET_OK, pd.DataFrame(
+            [
+                {"group_name": "AI Watch", "group_type": "CUSTOM"},
+                {"group_name": "Broken List", "group_type": "CUSTOM"},
+            ]
+        )
+
+    def get_user_security(self, group_name):
+        self.security_requests.append(group_name)
+        if group_name == "Broken List":
+            return service.ft.RET_ERROR, "list unavailable"
+        return service.ft.RET_OK, pd.DataFrame(
+            [
+                {"code": "US.AAPL", "name": "Apple", "lot_size": 1, "stock_type": "STOCK"},
+                {"code": "HK.00700", "name": "Tencent", "lot_size": 100, "stock_type": "STOCK"},
+            ]
+        )
 
 
 def test_map_moomoo_code_us_hk_and_unsupported():
@@ -110,12 +138,195 @@ def test_opend_host_guard(monkeypatch):
     service.validate_opend_host("192.168.1.20")
 
 
+def test_watchlist_group_type_normalization():
+    assert service.normalize_watchlist_group_type(None)[0] == "CUSTOM"
+    assert service.normalize_watchlist_group_type("custom")[1] == service.ft.UserSecurityGroupType.CUSTOM
+    assert service.normalize_watchlist_group_type("ALL")[1] == service.ft.UserSecurityGroupType.ALL
+    assert service.normalize_watchlist_group_type("system")[1] == service.ft.UserSecurityGroupType.SYSTEM
+
+    with pytest.raises(ValueError):
+        service.normalize_watchlist_group_type("REAL")
+
+
+def test_watchlists_cache_path_env(monkeypatch, tmp_path):
+    monkeypatch.setenv(service.WATCHLIST_CACHE_DIR_ENV, str(tmp_path))
+
+    assert service.watchlists_cache_path() == tmp_path / service.WATCHLIST_CACHE_FILE
+
+
+def test_build_watchlists_payload_cache_missing(monkeypatch, tmp_path):
+    monkeypatch.setenv(service.WATCHLIST_CACHE_DIR_ENV, str(tmp_path))
+
+    payload = service.build_watchlists_payload("127.0.0.1", 11111)
+
+    assert payload["source"] == "cache_missing"
+    assert payload["group_count"] == 0
+    assert payload["security_count"] == 0
+    assert payload["groups"] == []
+    assert payload["error"] == "watchlists cache not found"
+
+
+def test_build_watchlists_payload_reads_cache_without_opend(monkeypatch, tmp_path):
+    monkeypatch.setenv(service.WATCHLIST_CACHE_DIR_ENV, str(tmp_path))
+    cached_payload = service.watchlists_payload(
+        source="opend_sync",
+        group_type_name="CUSTOM",
+        synced_at="2026-06-08T00:00:00+00:00",
+        groups=[
+            {
+                "group_name": "AI Watch",
+                "group_type": "CUSTOM",
+                "count": 1,
+                "securities": [{"code": "US.AAPL", "name": "Apple"}],
+                "error": None,
+            }
+        ],
+    )
+    service.write_watchlists_cache(cached_payload)
+
+    def fail_quote_context(host, port):
+        raise AssertionError("GET /api/watchlists should not call OpenD")
+
+    monkeypatch.setattr(service, "quote_context", fail_quote_context)
+
+    payload = service.build_watchlists_payload("127.0.0.1", 11111)
+
+    assert payload["source"] == "cache"
+    assert payload["synced_at"] == "2026-06-08T00:00:00+00:00"
+    assert payload["group_count"] == 1
+    assert payload["security_count"] == 1
+    assert payload["groups"][0]["securities"][0]["code"] == "US.AAPL"
+
+
+def test_build_watchlists_payload_cache_error(monkeypatch, tmp_path):
+    monkeypatch.setenv(service.WATCHLIST_CACHE_DIR_ENV, str(tmp_path))
+    service.watchlists_cache_path().parent.mkdir(parents=True, exist_ok=True)
+    service.watchlists_cache_path().write_text("{bad json", encoding="utf-8")
+
+    payload = service.build_watchlists_payload("127.0.0.1", 11111)
+
+    assert payload["source"] == "cache_error"
+    assert payload["groups"] == []
+    assert "failed to read cache" in payload["error"]
+
+
+def test_sync_watchlists_cache_partial_error(monkeypatch, tmp_path):
+    fake_ctx = FakeWatchlistQuoteContext()
+    sleep_calls = []
+
+    @contextmanager
+    def fake_quote_context(host, port):
+        yield fake_ctx
+
+    monkeypatch.setenv(service.WATCHLIST_CACHE_DIR_ENV, str(tmp_path))
+    monkeypatch.setattr(service, "quote_context", fake_quote_context)
+
+    payload = service.sync_watchlists_cache(
+        "127.0.0.1",
+        11111,
+        sleep_func=lambda seconds: sleep_calls.append(seconds),
+    )
+
+    assert payload["source"] == "opend_sync"
+    assert payload["group_type"] == "CUSTOM"
+    assert payload["group_count"] == 2
+    assert payload["security_count"] == 2
+    assert fake_ctx.group_type == service.ft.UserSecurityGroupType.CUSTOM
+    assert fake_ctx.security_requests == ["AI Watch", "Broken List"]
+    assert sleep_calls == [service.WATCHLIST_SYNC_DELAY_SEC]
+    assert payload["groups"][0]["count"] == 2
+    assert payload["groups"][0]["securities"][0]["code"] == "US.AAPL"
+    assert payload["groups"][1]["error"] == "list unavailable"
+    assert service.watchlists_cache_path().exists()
+    assert service.read_watchlists_cache()["source"] == "cache"
+
+
 def test_dashboard_route_blocks_remote_before_opend():
     client = TestClient(account_app.app)
     response = client.get("/api/dashboard?host=192.168.1.20&port=11111&market=US")
 
     assert response.status_code == 400
     assert service.ALLOW_REMOTE_ENV in response.json()["detail"]
+
+
+def test_watchlists_route_blocks_remote_before_opend():
+    client = TestClient(account_app.app)
+    response = client.get("/api/watchlists?host=192.168.1.20&port=11111")
+
+    assert response.status_code == 400
+    assert service.ALLOW_REMOTE_ENV in response.json()["detail"]
+
+
+def test_watchlists_sync_route_blocks_remote_before_opend():
+    client = TestClient(account_app.app)
+    response = client.post("/api/watchlists/sync?host=192.168.1.20&port=11111")
+
+    assert response.status_code == 400
+    assert service.ALLOW_REMOTE_ENV in response.json()["detail"]
+
+
+def test_watchlists_route_defaults_to_custom(monkeypatch):
+    captured = {}
+
+    def fake_build_watchlists_payload(host, port, group_type):
+        captured["host"] = host
+        captured["port"] = port
+        captured["group_type"] = group_type
+        return {
+            "source": "cache_missing",
+            "synced_at": None,
+            "cache_path": "/tmp/watchlists_cache.json",
+            "group_type": group_type,
+            "group_count": 0,
+            "security_count": 0,
+            "groups": [],
+            "error": "watchlists cache not found",
+        }
+
+    monkeypatch.setattr(account_app, "build_watchlists_payload", fake_build_watchlists_payload)
+
+    response = TestClient(account_app.app).get("/api/watchlists?host=127.0.0.1&port=11111")
+
+    assert response.status_code == 200
+    assert captured == {"host": "127.0.0.1", "port": 11111, "group_type": "CUSTOM"}
+    assert response.json()["group_type"] == "CUSTOM"
+    assert response.json()["source"] == "cache_missing"
+
+
+def test_watchlists_sync_route_defaults_to_custom(monkeypatch):
+    captured = {}
+
+    def fake_sync_watchlists_cache(host, port, group_type):
+        captured["host"] = host
+        captured["port"] = port
+        captured["group_type"] = group_type
+        return {
+            "source": "opend_sync",
+            "synced_at": "2026-06-08T00:00:00+00:00",
+            "cache_path": "/tmp/watchlists_cache.json",
+            "group_type": group_type,
+            "group_count": 1,
+            "security_count": 1,
+            "groups": [
+                {
+                    "group_name": "AI Watch",
+                    "group_type": "CUSTOM",
+                    "count": 1,
+                    "securities": [{"code": "US.AAPL", "name": "Apple"}],
+                    "error": None,
+                }
+            ],
+            "error": None,
+        }
+
+    monkeypatch.setattr(account_app, "sync_watchlists_cache", fake_sync_watchlists_cache)
+
+    response = TestClient(account_app.app).post("/api/watchlists/sync?host=127.0.0.1&port=11111")
+
+    assert response.status_code == 200
+    assert captured == {"host": "127.0.0.1", "port": 11111, "group_type": "CUSTOM"}
+    assert response.json()["source"] == "opend_sync"
+    assert response.json()["groups"][0]["securities"][0]["code"] == "US.AAPL"
 
 
 def test_dashboard_route_uses_masked_payload(monkeypatch):
@@ -173,6 +384,47 @@ def test_position_detail_drawer_static_contract():
     assert "market_data_url" in app_js
     assert ".detail-drawer" in style_css
     assert "max-width: min(440px, 100vw)" in style_css
+
+
+def test_watchlists_static_contract():
+    root = os.path.dirname(os.path.dirname(__file__))
+    index_html = open(os.path.join(root, "moomoo/examples/account_web/static/index.html"), encoding="utf-8").read()
+    app_js = open(os.path.join(root, "moomoo/examples/account_web/static/app.js"), encoding="utf-8").read()
+    style_css = open(os.path.join(root, "moomoo/examples/account_web/static/style.css"), encoding="utf-8").read()
+
+    assert index_html.count('class="nav-item') == 2
+    assert 'data-page-target="overview"' in index_html
+    assert 'data-page-target="watchlists"' in index_html
+    assert 'data-page="overview"' in index_html
+    assert 'data-page="watchlists" hidden' in index_html
+    assert 'href="#watchlists"' in index_html
+    assert 'id="watchlist-select"' not in index_html
+    assert 'id="watchlist-table"' not in index_html
+    assert 'id="watchlists-sync"' in index_html
+    assert 'id="watchlists-list"' in index_html
+    assert index_html.index('data-page="watchlists"') < index_html.index('id="watchlists"')
+    assert "let activePage" in app_js
+    assert "function pageFromHash()" in app_js
+    assert "function setActivePage(page)" in app_js
+    assert "let currentWatchlists" in app_js
+    assert "function renderWatchlistTable(rows)" in app_js
+    assert "function renderWatchlists(groups)" in app_js
+    assert "function fetchMarketDataSnapshotsInBatches(codes)" in app_js
+    assert "function watchlistsWithSnapshots(groups, snapshotsByCode)" in app_js
+    assert "function setWatchlistsSyncing(syncing)" in app_js
+    assert "function syncWatchlistsFromOpenD()" in app_js
+    assert "function loadWatchlists(loadId)" in app_js
+    assert "function loadOverview()" in app_js
+    assert "function loadWatchlistsPage" in app_js
+    assert "/api/watchlists" in app_js
+    assert "/api/watchlists/sync" in app_js
+    assert "cache_missing" in app_js
+    assert "Loaded from cache" in app_js
+    assert 'group_type: "CUSTOM"' in app_js
+    assert ".page-panel" in style_css
+    assert ".page-panel[hidden]" in style_css
+    assert ".watchlists-stack" in style_css
+    assert ".watchlist-card" in style_css
 
 
 def test_account_web_remains_read_only_static_boundary():

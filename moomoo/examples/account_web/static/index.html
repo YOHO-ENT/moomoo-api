@@ -18,11 +18,9 @@
           </div>
         </div>
 
-        <nav class="nav" aria-label="Dashboard sections">
-          <a class="nav-item active" href="#overview">Overview</a>
-          <a class="nav-item" href="#assets">Assets</a>
-          <a class="nav-item" href="#signals">Signals</a>
-          <a class="nav-item" href="#positions">Positions</a>
+        <nav class="nav" aria-label="Dashboard pages">
+          <a class="nav-item active" href="#overview" data-page-target="overview">Overview</a>
+          <a class="nav-item" href="#watchlists" data-page-target="watchlists">Watchlists</a>
         </nav>
 
         <div class="sidebar-footer">
@@ -48,60 +46,77 @@
         </header>
 
         <main class="content">
-          <section id="overview" class="section-card">
-            <div class="section-header">
-              <h2>OpenD</h2>
-              <span class="section-kicker">Runtime</span>
-            </div>
-            <div id="status" class="metrics"></div>
-          </section>
+          <div class="page-panel" data-page="overview">
+            <section id="overview" class="section-card">
+              <div class="section-header">
+                <h2>OpenD</h2>
+                <span class="section-kicker">Runtime</span>
+              </div>
+              <div id="status" class="metrics"></div>
+            </section>
 
-          <section class="section-card">
-            <div class="section-header">
-              <h2>Account</h2>
-              <span class="section-kicker">FUTUAU REAL</span>
-            </div>
-            <div id="account" class="metrics"></div>
-          </section>
+            <section class="section-card">
+              <div class="section-header">
+                <h2>Account</h2>
+                <span class="section-kicker">FUTUAU REAL</span>
+              </div>
+              <div id="account" class="metrics"></div>
+            </section>
 
-          <section id="assets" class="section-card strong">
-            <div class="section-header">
-              <h2>Assets</h2>
-              <span class="section-kicker">Balance</span>
-            </div>
-            <div id="assets-summary" class="metrics"></div>
-          </section>
+            <section id="assets" class="section-card strong">
+              <div class="section-header">
+                <h2>Assets</h2>
+                <span class="section-kicker">Balance</span>
+              </div>
+              <div id="assets-summary" class="metrics"></div>
+            </section>
 
-          <section class="section-card">
-            <div class="section-header">
-              <h2>Currency Assets</h2>
-              <span class="section-kicker">Cash split</span>
-            </div>
-            <div class="table-scroll"><table id="currency"></table></div>
-          </section>
+            <section class="section-card">
+              <div class="section-header">
+                <h2>Currency Assets</h2>
+                <span class="section-kicker">Cash split</span>
+              </div>
+              <div class="table-scroll"><table id="currency"></table></div>
+            </section>
 
-          <section id="signals" class="section-card">
-            <div class="section-header">
-              <h2>Signals</h2>
-              <span class="section-kicker">market-data-lab</span>
-            </div>
-            <div id="market-data-status" class="market-status muted">Waiting for positions</div>
-            <div class="signal-filters" aria-label="Signal filters">
-              <button class="filter-button active" type="button" data-filter="all">All</button>
-              <button class="filter-button" type="button" data-filter="Momentum">Momentum</button>
-              <button class="filter-button" type="button" data-filter="Risk Review">Risk</button>
-              <button class="filter-button" type="button" data-filter="Data Gap">Data Gap</button>
-            </div>
-            <div id="focus-list" class="focus-grid"></div>
-          </section>
+            <section id="signals" class="section-card">
+              <div class="section-header">
+                <h2>Signals</h2>
+                <span class="section-kicker">market-data-lab</span>
+              </div>
+              <div id="market-data-status" class="market-status muted">Waiting for positions</div>
+              <div class="signal-filters" aria-label="Signal filters">
+                <button class="filter-button active" type="button" data-filter="all">All</button>
+                <button class="filter-button" type="button" data-filter="Momentum">Momentum</button>
+                <button class="filter-button" type="button" data-filter="Risk Review">Risk</button>
+                <button class="filter-button" type="button" data-filter="Data Gap">Data Gap</button>
+              </div>
+              <div id="focus-list" class="focus-grid"></div>
+            </section>
 
-          <section id="positions" class="section-card">
-            <div class="section-header">
-              <h2>Positions</h2>
-              <span class="section-kicker">Holdings</span>
-            </div>
-            <div class="table-scroll"><table id="positions-table"></table></div>
-          </section>
+            <section id="positions" class="section-card">
+              <div class="section-header">
+                <h2>Positions</h2>
+                <span class="section-kicker">Holdings</span>
+              </div>
+              <div class="table-scroll"><table id="positions-table"></table></div>
+            </section>
+          </div>
+
+          <div class="page-panel" data-page="watchlists" hidden>
+            <section id="watchlists" class="section-card">
+              <div class="section-header">
+                <h2>Watchlists</h2>
+                <div class="watchlist-actions">
+                  <span class="section-kicker">moomoo custom lists</span>
+                  <button id="watchlists-sync" class="secondary-button" type="button">Sync from OpenD</button>
+                </div>
+              </div>
+              <div id="watchlist-status" class="market-status muted">Waiting for OpenD</div>
+              <div id="watchlist-summary" class="watchlist-summary"></div>
+              <div id="watchlists-list" class="watchlists-stack"></div>
+            </section>
+          </div>
         </main>
       </div>
     </div>
