@@ -1,0 +1,19 @@
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    MOOMOO_ACCOUNT_WEB_CACHE_DIR=/data/account_web \
+    MOOMOO_MARKET_DATA_API_URL=http://market-data-lab-api:8010 \
+    MOOMOO_MARKET_DATA_UI_URL=/market/
+
+WORKDIR /app
+
+COPY requirements-gui.txt requirements.txt setup.py README.md ./
+COPY moomoo ./moomoo
+RUN pip install --no-cache-dir -r requirements-gui.txt && \
+    pip install --no-cache-dir .
+
+RUN mkdir -p /data/account_web
+
+EXPOSE 8501
+
+CMD ["uvicorn", "moomoo.examples.account_web.app:app", "--host", "0.0.0.0", "--port", "8501"]

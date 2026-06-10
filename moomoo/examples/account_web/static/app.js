@@ -1,5 +1,19 @@
 const $ = (id) => document.getElementById(id);
 
+function accountWebBasePath() {
+  const script = document.currentScript || document.querySelector('script[src*="app.js"]');
+  if (!script) return "";
+  const source = new URL(script.getAttribute("src"), window.location.href);
+  return source.pathname.replace(/\/static\/app\.js$/, "");
+}
+
+const apiBasePath = accountWebBasePath();
+
+function apiUrl(path) {
+  const normalized = path.startsWith("/") ? path : `/${path}`;
+  return `${apiBasePath}${normalized}`;
+}
+
 let activeLoadId = 0;
 let activeWatchlistsLoadId = 0;
 let activePage = "overview";
@@ -308,6 +322,7 @@ function cellClass(column, value) {
     if (numberLike(value) && value > 0) classes.push("positive");
     if (numberLike(value) && value < 0) classes.push("negative");
   }
+  if (column === "realized_fee" && numberLike(value) && value > 0) classes.push("warning");
   if (column === "md_quality") {
     if (value === "ok") classes.push("positive");
     if (value === "partial") classes.push("warning");
@@ -1451,7 +1466,7 @@ function renderWatchlistCacheStatus(payload) {
 
 async function fetchMarketDataSnapshots(codes) {
   const params = new URLSearchParams({ codes: codes.join(",") });
-  const response = await fetch(`/api/market-data/snapshots?${params.toString()}`);
+  const response = await fetch(apiUrl(`/api/market-data/snapshots?${params.toString()}`));
   if (!response.ok) {
     const detail = await response.text();
     throw new Error(detail);
@@ -1549,7 +1564,7 @@ async function loadWatchlists(loadId) {
   });
 
   try {
-    const response = await fetch(`/api/watchlists?${params.toString()}`);
+    const response = await fetch(apiUrl(`/api/watchlists?${params.toString()}`));
     if (!response.ok) {
       const detail = await response.text();
       throw new Error(detail);
@@ -1586,7 +1601,7 @@ async function syncWatchlistsFromOpenD() {
   });
 
   try {
-    const response = await fetch(`/api/watchlists/sync?${params.toString()}`, { method: "POST" });
+    const response = await fetch(apiUrl(`/api/watchlists/sync?${params.toString()}`), { method: "POST" });
     if (!response.ok) {
       const detail = await response.text();
       throw new Error(detail);
@@ -1665,7 +1680,7 @@ async function loadDashboard(loadId) {
   });
 
   try {
-    const response = await fetch(`/api/dashboard?${params.toString()}`);
+    const response = await fetch(apiUrl(`/api/dashboard?${params.toString()}`));
     if (!response.ok) {
       const detail = await response.text();
       throw new Error(detail);
@@ -1715,7 +1730,7 @@ async function loadRealized(loadId) {
   });
 
   try {
-    const response = await fetch(`/api/realized-pl?${params.toString()}`);
+    const response = await fetch(apiUrl(`/api/realized-pl?${params.toString()}`));
     if (!response.ok) {
       const detail = await response.text();
       throw new Error(detail);

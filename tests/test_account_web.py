@@ -840,8 +840,8 @@ def test_watchlists_static_contract():
     assert 'id="realized-status"' in index_html
     assert 'id="realized-summary"' in index_html
     assert 'id="realized-table"' in index_html
-    assert 'href="/static/style.css?v=realized-detail"' in index_html
-    assert 'src="/static/app.js?v=realized-detail"' in index_html
+    assert 'href="static/style.css?v=realized-fee-tone"' in index_html
+    assert 'src="static/app.js?v=realized-fee-tone"' in index_html
     assert 'id="watchlist-select"' not in index_html
     assert 'id="watchlist-table"' not in index_html
     assert 'id="watchlists-sync"' in index_html
@@ -862,6 +862,8 @@ def test_watchlists_static_contract():
     assert index_html.index('data-page="signals"') < index_html.index('id="signals"')
     assert 'id="signals"' not in index_html[overview_start:watchlists_start]
     assert "let activePage" in app_js
+    assert "function accountWebBasePath()" in app_js
+    assert "function apiUrl(path)" in app_js
     assert 'const appPages = ["overview", "realized", "watchlists", "signals"]' in app_js
     assert 'const defaultAssetCurrencies = ["USD", "HKD", "AUD", "CNH", "SGD", "JPY"]' in app_js
     assert "let watchlistSearchQuery" in app_js
@@ -900,6 +902,7 @@ def test_watchlists_static_contract():
     assert 'metric(`${currency} Net`, total.net_realized_pl, "net_realized_pl")' in app_js
     assert 'metric("Range", formatRealizedRange(payload), "", "compact-value")' in app_js
     assert 'key === "realized_fee" && value > 0' in app_js
+    assert 'column === "realized_fee" && numberLike(value) && value > 0' in app_js
     assert "function loadRealizedPage" in app_js
     assert "/api/realized-pl" in app_js
     assert "function renderWatchlistTable(rows)" in app_js
