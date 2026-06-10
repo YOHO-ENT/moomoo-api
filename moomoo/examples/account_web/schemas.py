@@ -78,6 +78,19 @@ class PositionsExportPayload(BaseModel):
     error: Any = None
 
 
+class RealizedPlPayload(BaseModel):
+    status: str
+    market: str
+    start: str
+    end: str
+    first_realized_at: Any = None
+    last_realized_at: Any = None
+    currency_totals: Dict[str, Any]
+    count: int
+    items: List[Dict[str, Any]]
+    error: Any = None
+
+
 class ResearchUniverseExportPayload(BaseModel):
     source: str
     status: str

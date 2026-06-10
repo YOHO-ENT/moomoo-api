@@ -485,6 +485,135 @@ def test_research_universe_export_route_blocks_remote_before_opend():
     assert service.ALLOW_REMOTE_ENV in response.json()["detail"]
 
 
+def test_realized_pl_route_blocks_remote_before_opend():
+    client = TestClient(account_app.app)
+    response = client.get("/api/realized-pl?host=192.168.1.20&port=11111&market=US")
+
+    assert response.status_code == 400
+    assert service.ALLOW_REMOTE_ENV in response.json()["detail"]
+
+
+def test_calculate_realized_pl_with_allocated_fees():
+    deals = pd.DataFrame(
+        [
+            {
+                "code": "US.AAPL",
+                "stock_name": "Apple",
+                "deal_id": "d1",
+                "order_id": "buy-1",
+                "qty": 10,
+                "price": 100,
+                "trd_side": "BUY",
+                "create_time": "2026-06-01 10:00:00",
+            },
+            {
+                "code": "US.AAPL",
+                "stock_name": "Apple",
+                "deal_id": "d2",
+                "order_id": "sell-1",
+                "qty": 4,
+                "price": 120,
+                "trd_side": "SELL",
+                "create_time": "2026-06-02 10:00:00",
+            },
+            {
+                "code": "US.AAPL",
+                "stock_name": "Apple",
+                "deal_id": "d2",
+                "order_id": "sell-1",
+                "qty": 4,
+                "price": 120,
+                "trd_side": "SELL",
+                "create_time": "2026-06-02 10:00:00",
+            },
+        ]
+    )
+    orders = pd.DataFrame(
+        [
+            {"order_id": "buy-1", "code": "US.AAPL", "currency": "USD", "trd_side": "BUY", "create_time": "2026-06-01 10:00:00"},
+            {"order_id": "sell-1", "code": "US.AAPL", "currency": "USD", "trd_side": "SELL", "create_time": "2026-06-02 10:00:00"},
+        ]
+    )
+    fees = pd.DataFrame(
+        [
+            {"order_id": "buy-1", "fee_amount": 1.00, "fee_details": []},
+            {"order_id": "sell-1", "fee_amount": 0.50, "fee_details": []},
+        ]
+    )
+
+    totals, items, first_realized_at, last_realized_at = service.calculate_realized_pl(deals, orders, fees)
+
+    assert first_realized_at == "2026-06-02 10:00:00"
+    assert last_realized_at == "2026-06-02 10:00:00"
+    assert totals["USD"]["gross_realized_pl"] == 80.0
+    assert totals["USD"]["realized_fee"] == 0.9
+    assert totals["USD"]["net_realized_pl"] == 79.1
+    assert len(items) == 1
+    assert items[0]["code"] == "US.AAPL"
+    assert items[0]["market_data_ticker"] == "AAPL"
+    assert items[0]["mapping_status"] == "mapped"
+    assert items[0]["market_data_url"].endswith("/market/AAPL")
+    assert items[0]["gross_realized_pl"] == 80.0
+    assert items[0]["realized_fee"] == 0.9
+    assert items[0]["net_realized_pl"] == 79.1
+    assert items[0]["closed_qty"] == 4.0
+    assert items[0]["realized_trade_count"] == 1
+
+
+def test_realized_pl_route_uses_safe_schema(monkeypatch):
+    captured = {}
+
+    def fake_build_realized_pl_payload(host, port, market):
+        captured["host"] = host
+        captured["port"] = port
+        captured["market"] = market
+        return {
+            "status": "ok",
+            "market": market,
+            "start": "2010-01-01",
+            "end": "2026-06-10",
+            "first_realized_at": "2026-06-02 10:00:00",
+            "last_realized_at": "2026-06-02 10:00:00",
+            "currency_totals": {
+                "USD": {
+                    "gross_realized_pl": 80.0,
+                    "realized_fee": 0.9,
+                    "net_realized_pl": 79.1,
+                    "closed_qty": 4.0,
+                    "realized_trade_count": 1,
+                }
+            },
+            "count": 1,
+            "items": [
+                {
+                    "code": "US.AAPL",
+                    "stock_name": "Apple",
+                    "currency": "USD",
+                    "gross_realized_pl": 80.0,
+                    "realized_fee": 0.9,
+                    "net_realized_pl": 79.1,
+                    "closed_qty": 4.0,
+                    "realized_trade_count": 1,
+                    "first_realized_at": "2026-06-02 10:00:00",
+                    "last_realized_at": "2026-06-02 10:00:00",
+                }
+            ],
+            "error": None,
+        }
+
+    monkeypatch.setattr(account_app, "build_realized_pl_payload", fake_build_realized_pl_payload)
+
+    response = TestClient(account_app.app).get("/api/realized-pl?host=127.0.0.1&port=11111&market=US")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert captured == {"host": "127.0.0.1", "port": 11111, "market": "US"}
+    assert payload["items"][0]["net_realized_pl"] == 79.1
+    forbidden = {"acc_id", "qty", "market_val", "cost_price", "cash", "total_assets"}
+    assert forbidden.isdisjoint(payload)
+    assert forbidden.isdisjoint(payload["items"][0])
+
+
 def test_watchlists_route_defaults_to_custom(monkeypatch):
     captured = {}
 
@@ -696,15 +825,23 @@ def test_watchlists_static_contract():
     app_js = open(os.path.join(root, "moomoo/examples/account_web/static/app.js"), encoding="utf-8").read()
     style_css = open(os.path.join(root, "moomoo/examples/account_web/static/style.css"), encoding="utf-8").read()
 
-    assert index_html.count('class="nav-item') == 3
+    assert index_html.count('class="nav-item') == 4
     assert 'data-page-target="overview"' in index_html
+    assert 'data-page-target="realized"' in index_html
     assert 'data-page-target="watchlists"' in index_html
     assert 'data-page-target="signals"' in index_html
     assert 'data-page="overview"' in index_html
+    assert 'data-page="realized" hidden' in index_html
     assert 'data-page="watchlists" hidden' in index_html
     assert 'data-page="signals" hidden' in index_html
+    assert 'href="#realized"' in index_html
     assert 'href="#watchlists"' in index_html
     assert 'href="#signals"' in index_html
+    assert 'id="realized-status"' in index_html
+    assert 'id="realized-summary"' in index_html
+    assert 'id="realized-table"' in index_html
+    assert 'href="/static/style.css?v=realized-detail"' in index_html
+    assert 'src="/static/app.js?v=realized-detail"' in index_html
     assert 'id="watchlist-select"' not in index_html
     assert 'id="watchlist-table"' not in index_html
     assert 'id="watchlists-sync"' in index_html
@@ -715,14 +852,17 @@ def test_watchlists_static_contract():
     assert 'id="asset-currency"' in index_html
     assert 'id="detail-kicker"' in index_html
     overview_start = index_html.index('data-page="overview"')
+    realized_start = index_html.index('data-page="realized"')
     watchlists_start = index_html.index('data-page="watchlists"')
     signals_start = index_html.index('data-page="signals"')
+    assert overview_start < realized_start < watchlists_start < signals_start
     assert watchlists_start < signals_start
+    assert index_html.index('data-page="realized"') < index_html.index('id="realized"')
     assert index_html.index('data-page="watchlists"') < index_html.index('id="watchlists"')
     assert index_html.index('data-page="signals"') < index_html.index('id="signals"')
     assert 'id="signals"' not in index_html[overview_start:watchlists_start]
     assert "let activePage" in app_js
-    assert 'const appPages = ["overview", "watchlists", "signals"]' in app_js
+    assert 'const appPages = ["overview", "realized", "watchlists", "signals"]' in app_js
     assert 'const defaultAssetCurrencies = ["USD", "HKD", "AUD", "CNH", "SGD", "JPY"]' in app_js
     assert "let watchlistSearchQuery" in app_js
     assert "let watchlistExpansionMode" in app_js
@@ -738,6 +878,30 @@ def test_watchlists_static_contract():
     assert "function renderAccountResearch()" in app_js
     assert "renderPositionsTable(sortedPositions(currentPositions))" in app_js
     assert "renderSignalsAndPositions" not in app_js
+    assert "let realizedLoaded" in app_js
+    assert "let realizedSortColumn = null;" in app_js
+    assert "let realizedSortDirection = null;" in app_js
+    assert "function renderRealized(payload)" in app_js
+    assert "function renderRealizedTable(payload)" in app_js
+    assert "function bindOpenRealizedDetail(node, item)" in app_js
+    assert "function selectedRealizedItem()" in app_js
+    assert "function renderRealizedDetail(item)" in app_js
+    assert "function openRealizedDetail(code)" in app_js
+    assert "renderDetailLabAction(item)" in app_js
+    assert 'detailSection("Realized P/L Summary"' in app_js
+    assert "function formatTimestampSeconds(value)" in app_js
+    assert "function formatRealizedRange(payload)" in app_js
+    assert "function setRealizedSort(column)" in app_js
+    assert "realizedSortColumn = null;" in app_js
+    assert "realizedSortDirection = null;" in app_js
+    assert '["pl_val", "pl_ratio", "gross_realized_pl", "net_realized_pl"].includes(column)' in app_js
+    assert 'metric(`${currency} Gross`, total.gross_realized_pl, "gross_realized_pl")' in app_js
+    assert 'metric(`${currency} Fee`, total.realized_fee, "realized_fee")' in app_js
+    assert 'metric(`${currency} Net`, total.net_realized_pl, "net_realized_pl")' in app_js
+    assert 'metric("Range", formatRealizedRange(payload), "", "compact-value")' in app_js
+    assert 'key === "realized_fee" && value > 0' in app_js
+    assert "function loadRealizedPage" in app_js
+    assert "/api/realized-pl" in app_js
     assert "function renderWatchlistTable(rows)" in app_js
     assert "function renderWatchlists(groups)" in app_js
     assert "function visibleWatchlistGroups(groups)" in app_js
@@ -765,6 +929,10 @@ def test_watchlists_static_contract():
     assert 'group_type: "CUSTOM"' in app_js
     assert ".page-panel" in style_css
     assert ".page-panel[hidden]" in style_css
+    assert ".realized-table" in style_css
+    assert ".realized-summary .metric .value.warning" in style_css
+    assert ".realized-summary .metric.compact-value .value" in style_css
+    assert ".table-sort-button" in style_css
     assert ".watchlist-toolbar" in style_css
     assert ".watchlist-table" in style_css
     assert ".asset-currency-control" in style_css

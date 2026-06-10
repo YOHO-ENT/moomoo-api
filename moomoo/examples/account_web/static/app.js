@@ -9,10 +9,16 @@ let currentDashboard = null;
 let currentPositions = [];
 let currentWatchlistsPayload = null;
 let currentWatchlists = [];
+let currentRealizedPayload = null;
 let activeDetailCode = null;
 let activeWatchlistDataLoadId = 0;
 let watchlistsLoaded = false;
 let currentWatchlistsParamsKey = null;
+let realizedLoaded = false;
+let currentRealizedParamsKey = null;
+let activeRealizedLoadId = 0;
+let realizedSortColumn = null;
+let realizedSortDirection = null;
 let watchlistsSyncing = false;
 let watchlistSearchQuery = "";
 let watchlistExpansionMode = "all-expanded";
@@ -20,7 +26,7 @@ let expandedWatchlists = new Set();
 let collapsedWatchlists = new Set();
 let activeDetailMode = "position";
 
-const appPages = ["overview", "watchlists", "signals"];
+const appPages = ["overview", "realized", "watchlists", "signals"];
 const defaultAssetCurrencies = ["USD", "HKD", "AUD", "CNH", "SGD", "JPY"];
 
 const numericColumns = new Set([
@@ -42,6 +48,11 @@ const numericColumns = new Set([
   "aud_assets",
   "md_price",
   "md_rsi14",
+  "gross_realized_pl",
+  "realized_fee",
+  "net_realized_pl",
+  "closed_qty",
+  "realized_trade_count",
 ]);
 
 const sensitiveColumns = new Set([
@@ -61,6 +72,9 @@ const sensitiveColumns = new Set([
   "usd_assets",
   "au_cash",
   "aud_assets",
+  "gross_realized_pl",
+  "realized_fee",
+  "net_realized_pl",
 ]);
 
 const positionColumns = [
@@ -96,6 +110,18 @@ const watchlistColumns = [
   "market_data_url",
 ];
 
+const realizedColumns = [
+  "code",
+  "stock_name",
+  "currency",
+  "gross_realized_pl",
+  "realized_fee",
+  "net_realized_pl",
+  "closed_qty",
+  "realized_trade_count",
+  "last_realized_at",
+];
+
 const columnLabels = {
   holding_status: "status",
   md_ticker: "ticker",
@@ -105,6 +131,13 @@ const columnLabels = {
   md_quality: "quality",
   md_as_of: "as_of",
   market_data_url: "lab",
+  stock_name: "name",
+  gross_realized_pl: "gross",
+  realized_fee: "fee",
+  net_realized_pl: "net",
+  closed_qty: "closed_qty",
+  realized_trade_count: "trades",
+  last_realized_at: "last_realized",
 };
 
 const WATCHLIST_SNAPSHOT_BATCH_SIZE = 80;
@@ -146,9 +179,19 @@ function formatReturn(value) {
   return formatPercent(value);
 }
 
+function formatTimestampSeconds(value) {
+  if (!value) return "N/A";
+  return text(value).replace(/\.\d+$/, "");
+}
+
+function formatRealizedRange(payload) {
+  return `${formatTimestampSeconds(payload.first_realized_at)} → ${formatTimestampSeconds(payload.last_realized_at)}`;
+}
+
 function valueTone(value, key = "") {
   if (!numberLike(value)) return "";
-  if (!["pl_val", "pl_ratio"].includes(key)) return "";
+  if (key === "realized_fee" && value > 0) return " warning";
+  if (!["pl_val", "pl_ratio", "gross_realized_pl", "net_realized_pl"].includes(key)) return "";
   if (value > 0) return " positive";
   if (value < 0) return " negative";
   return "";
@@ -167,6 +210,11 @@ function setMarketDataStatus(label, tone = "muted") {
 function setWatchlistStatus(label, tone = "muted") {
   $("watchlist-status").className = `market-status ${tone}`;
   $("watchlist-status").textContent = label;
+}
+
+function setRealizedStatus(label, tone = "muted") {
+  $("realized-status").className = `market-status ${tone}`;
+  $("realized-status").textContent = label;
 }
 
 function setWatchlistsSyncing(syncing) {
@@ -212,6 +260,7 @@ function setActivePage(page) {
   });
 
   if (activePage === "watchlists") loadWatchlistsPage();
+  if (activePage === "realized") loadRealizedPage();
 }
 
 function updatePrivacyButtons() {
@@ -224,13 +273,14 @@ function togglePrivacyMode() {
   privacyMode = !privacyMode;
   updatePrivacyButtons();
   if (currentDashboard) renderDashboardData(currentDashboard);
+  if (currentRealizedPayload) renderRealized(currentRealizedPayload);
   renderAccountResearch();
   renderWatchlists(currentWatchlists);
 }
 
-function metric(name, value, key = "") {
+function metric(name, value, key = "", extraClass = "") {
   const item = document.createElement("div");
-  item.className = "metric";
+  item.className = `metric${extraClass ? ` ${extraClass}` : ""}`;
 
   const label = document.createElement("div");
   label.className = "name";
@@ -254,7 +304,7 @@ function cellClass(column, value) {
   if (["code", "md_ticker"].includes(column)) classes.push("ticker");
   if (numericColumns.has(column)) classes.push("numeric");
   if (column === "signal") classes.push("signal-cell");
-  if (["pl_val", "pl_ratio"].includes(column)) {
+  if (["pl_val", "pl_ratio", "gross_realized_pl", "net_realized_pl"].includes(column)) {
     if (numberLike(value) && value > 0) classes.push("positive");
     if (numberLike(value) && value < 0) classes.push("negative");
   }
@@ -408,6 +458,23 @@ function bindOpenWatchlistDetail(node, security) {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       openWatchlistDetail(code);
+    }
+  });
+}
+
+function bindOpenRealizedDetail(node, item) {
+  const code = item && item.code;
+  if (!code) return;
+
+  node.classList.add("actionable");
+  node.tabIndex = 0;
+  node.setAttribute("role", "button");
+  node.setAttribute("aria-label", `Open ${code} realized P/L detail`);
+  node.addEventListener("click", () => openRealizedDetail(code));
+  node.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      openRealizedDetail(code);
     }
   });
 }
@@ -778,9 +845,137 @@ function chip(label, tone = "muted") {
   return node;
 }
 
+function realizedSortValue(row, column) {
+  const value = row[column];
+  if (numericColumns.has(column)) return numberLike(value) ? value : Number.NEGATIVE_INFINITY;
+  return lowerText(value);
+}
+
+function sortedRealizedItems(items) {
+  if (!realizedSortColumn) {
+    return [...(items || [])].sort((left, right) => {
+      const netDiff = (right.net_realized_pl || 0) - (left.net_realized_pl || 0);
+      if (netDiff !== 0) return netDiff;
+      return lowerText(left.code).localeCompare(lowerText(right.code));
+    });
+  }
+
+  const direction = realizedSortDirection === "asc" ? 1 : -1;
+  return [...(items || [])].sort((left, right) => {
+    const leftValue = realizedSortValue(left, realizedSortColumn);
+    const rightValue = realizedSortValue(right, realizedSortColumn);
+    if (leftValue < rightValue) return -1 * direction;
+    if (leftValue > rightValue) return 1 * direction;
+    return lowerText(left.code).localeCompare(lowerText(right.code));
+  });
+}
+
+function setRealizedSort(column) {
+  if (realizedSortColumn !== column) {
+    realizedSortColumn = column;
+    realizedSortDirection = "asc";
+  } else if (realizedSortDirection === "asc") {
+    realizedSortDirection = "desc";
+  } else {
+    realizedSortColumn = null;
+    realizedSortDirection = null;
+  }
+  if (currentRealizedPayload) renderRealized(currentRealizedPayload);
+}
+
+function renderRealizedSummary(payload) {
+  const target = $("realized-summary");
+  const totals = payload?.currency_totals || {};
+  const currencies = Object.keys(totals);
+
+  if (!payload || payload.status !== "ok") {
+    target.replaceChildren();
+    return;
+  }
+
+  const nodes = [
+    metric("Symbols", payload.count),
+    metric("Range", formatRealizedRange(payload), "", "compact-value"),
+  ];
+
+  currencies.forEach((currency) => {
+    const total = totals[currency] || {};
+    nodes.push(metric(`${currency} Gross`, total.gross_realized_pl, "gross_realized_pl"));
+    nodes.push(metric(`${currency} Fee`, total.realized_fee, "realized_fee"));
+    nodes.push(metric(`${currency} Net`, total.net_realized_pl, "net_realized_pl"));
+  });
+
+  target.replaceChildren(...nodes);
+}
+
+function renderRealizedTable(payload) {
+  const table = $("realized-table");
+  table.replaceChildren();
+  const rows = sortedRealizedItems(payload?.items || []);
+
+  if (rows.length === 0) {
+    const body = document.createElement("tbody");
+    const row = body.insertRow();
+    const cell = row.insertCell();
+    cell.className = "muted";
+    cell.textContent = payload?.status === "ok" ? "No realized P/L yet" : "No rows";
+    table.appendChild(body);
+    return;
+  }
+
+  const head = document.createElement("thead");
+  const headerRow = head.insertRow();
+  realizedColumns.forEach((column) => {
+    const header = document.createElement("th");
+    const button = document.createElement("button");
+    button.className = "table-sort-button";
+    button.type = "button";
+    button.textContent = `${columnLabels[column] || column}${realizedSortColumn === column ? (realizedSortDirection === "asc" ? " ↑" : " ↓") : ""}`;
+    button.addEventListener("click", () => setRealizedSort(column));
+    header.appendChild(button);
+    if (numericColumns.has(column)) header.className = "numeric";
+    headerRow.appendChild(header);
+  });
+
+  const body = document.createElement("tbody");
+  rows.forEach((source) => {
+    const row = body.insertRow();
+    bindOpenRealizedDetail(row, source);
+    realizedColumns.forEach((column) => {
+      const value = source[column];
+      const cell = row.insertCell();
+      cell.className = cellClass(column, value);
+      if (column === "stock_name") cell.title = text(value);
+      cell.textContent = formatValue(value, column);
+    });
+  });
+
+  table.append(head, body);
+}
+
+function renderRealized(payload) {
+  currentRealizedPayload = payload;
+  renderRealizedSummary(payload);
+  renderRealizedTable(payload);
+  if (!payload) {
+    setRealizedStatus("Waiting to load realized P/L", "muted");
+    return;
+  }
+  if (payload.status !== "ok") {
+    setRealizedStatus(payload.error || "Realized P/L unavailable", "error");
+    return;
+  }
+  setRealizedStatus(`Loaded ${payload.count} realized symbols from OpenD`, "positive");
+}
+
 function selectedPosition() {
   if (!activeDetailCode) return null;
   return currentPositions.find((position) => position.code === activeDetailCode) || null;
+}
+
+function selectedRealizedItem() {
+  if (!activeDetailCode) return null;
+  return (currentRealizedPayload?.items || []).find((item) => item.code === activeDetailCode) || null;
 }
 
 function detailItem(label, value, key = "", formatter = null) {
@@ -967,10 +1162,48 @@ function renderWatchlistDetail(security) {
   content.replaceChildren(summary, detailSection("Holding Match", holdingItems), market, quality);
 }
 
+function renderRealizedDetail(item) {
+  const content = $("detail-content");
+  $("detail-kicker").textContent = "Realized P/L research";
+  if (!item) {
+    $("detail-title").textContent = "Realized P/L Detail";
+    renderDetailLabAction(null);
+    content.replaceChildren();
+    return;
+  }
+
+  $("detail-title").textContent = item.code || "Realized P/L Detail";
+  renderDetailLabAction(item);
+
+  const summary = detailSection("Realized P/L Summary", [
+    detailItem("Name", item.stock_name || item.market_data_ticker),
+    detailItem("Currency", item.currency),
+    detailItem("Gross", item.gross_realized_pl, "gross_realized_pl"),
+    detailItem("Fee", item.realized_fee, "realized_fee"),
+    detailItem("Net", item.net_realized_pl, "net_realized_pl"),
+    detailItem("Closed Quantity", item.closed_qty, "closed_qty"),
+    detailItem("Trades", item.realized_trade_count),
+    detailItem("First Realized", formatTimestampSeconds(item.first_realized_at)),
+    detailItem("Last Realized", formatTimestampSeconds(item.last_realized_at)),
+  ]);
+
+  const quality = detailSection("Data Quality", [
+    detailItem("Mapped Ticker", item.market_data_ticker),
+    detailItem("Mapping Status", item.mapping_status),
+    detailItem("Mapping Warning", item.mapping_warning),
+  ]);
+
+  content.replaceChildren(summary, quality);
+}
+
 function refreshActiveDetail() {
   if (!activeDetailCode) return;
   if (activeDetailMode === "watchlist") {
     renderWatchlistDetail(watchlistDetailForCode(activeDetailCode));
+    return;
+  }
+  if (activeDetailMode === "realized") {
+    renderRealizedDetail(selectedRealizedItem());
     return;
   }
   const position = selectedPosition();
@@ -999,6 +1232,13 @@ function openWatchlistDetail(code) {
   activeDetailMode = "watchlist";
   activeDetailCode = code;
   renderWatchlistDetail(watchlistDetailForCode(code));
+  setDetailVisible(true);
+}
+
+function openRealizedDetail(code) {
+  activeDetailMode = "realized";
+  activeDetailCode = code;
+  renderRealizedDetail(selectedRealizedItem());
   setDetailVisible(true);
 }
 
@@ -1462,6 +1702,46 @@ function loadOverview() {
   loadDashboard(loadId);
 }
 
+function realizedParamsKey() {
+  return `${$("host").value}:${$("port").value}:${$("market").value}`;
+}
+
+async function loadRealized(loadId) {
+  setRealizedStatus("Loading realized P/L from OpenD...", "muted");
+  const params = new URLSearchParams({
+    host: $("host").value,
+    port: $("port").value,
+    market: $("market").value,
+  });
+
+  try {
+    const response = await fetch(`/api/realized-pl?${params.toString()}`);
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(detail);
+    }
+
+    const payload = await response.json();
+    if (loadId !== activeRealizedLoadId) return;
+    renderRealized(payload);
+  } catch (error) {
+    if (loadId !== activeRealizedLoadId) return;
+    currentRealizedPayload = null;
+    renderRealizedTable(null);
+    renderRealizedSummary(null);
+    setRealizedStatus(error.message, "error");
+  }
+}
+
+function loadRealizedPage(options = {}) {
+  const key = realizedParamsKey();
+  if (realizedLoaded && !options.force && currentRealizedParamsKey === key) return;
+  realizedLoaded = true;
+  currentRealizedParamsKey = key;
+  const loadId = ++activeRealizedLoadId;
+  loadRealized(loadId);
+}
+
 function watchlistsParamsKey() {
   return `${$("host").value}:${$("port").value}:CUSTOM`;
 }
@@ -1478,6 +1758,10 @@ function loadWatchlistsPage(options = {}) {
 function refreshActivePage() {
   if (activePage === "watchlists") {
     loadWatchlistsPage({ force: true });
+    return;
+  }
+  if (activePage === "realized") {
+    loadRealizedPage({ force: true });
     return;
   }
   loadOverview();

@@ -4,8 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>moomoo Account Dashboard</title>
-    <link rel="stylesheet" href="/static/style.css">
-    <script defer src="/static/app.js"></script>
+    <link rel="stylesheet" href="/static/style.css?v=realized-detail">
+    <script defer src="/static/app.js?v=realized-detail"></script>
   </head>
   <body>
     <div class="shell">
@@ -20,6 +20,7 @@
 
         <nav class="nav" aria-label="Dashboard pages">
           <a class="nav-item active" href="#overview" data-page-target="overview">Overview</a>
+          <a class="nav-item" href="#realized" data-page-target="realized">Realized P/L</a>
           <a class="nav-item" href="#watchlists" data-page-target="watchlists">Watchlists</a>
           <a class="nav-item" href="#signals" data-page-target="signals">Signals</a>
         </nav>
@@ -94,6 +95,18 @@
                 <span class="section-kicker">Holdings</span>
               </div>
               <div class="table-scroll"><table id="positions-table"></table></div>
+            </section>
+          </div>
+
+          <div class="page-panel" data-page="realized" hidden>
+            <section id="realized" class="section-card">
+              <div class="section-header">
+                <h2>Realized P/L</h2>
+                <span class="section-kicker">History with fees</span>
+              </div>
+              <div id="realized-status" class="market-status muted">Open Realized P/L to load history</div>
+              <div id="realized-summary" class="realized-summary"></div>
+              <div class="table-scroll"><table id="realized-table" class="realized-table"></table></div>
             </section>
           </div>
 
