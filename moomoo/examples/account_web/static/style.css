@@ -385,12 +385,40 @@ table {
   table-layout: fixed;
 }
 
+.realized-table {
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+}
+
 .watchlist-table th,
-.watchlist-table td {
+.watchlist-table td,
+.realized-table th,
+.realized-table td {
   overflow: hidden;
   padding-right: 8px;
   padding-left: 8px;
   text-overflow: ellipsis;
+}
+
+.realized-table th:nth-child(1),
+.realized-table td:nth-child(1) {
+  width: 96px;
+}
+
+.realized-table th:nth-child(2),
+.realized-table td:nth-child(2) {
+  width: auto;
+}
+
+.realized-table th:nth-child(3),
+.realized-table td:nth-child(3) {
+  width: 76px;
+}
+
+.realized-table th:nth-child(n + 4),
+.realized-table td:nth-child(n + 4) {
+  width: 112px;
 }
 
 th,
@@ -405,6 +433,23 @@ th {
   color: var(--color-text-secondary);
   font-size: 11px;
   font-weight: 700;
+}
+
+.table-sort-button {
+  width: 100%;
+  height: auto;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  text-align: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+.table-sort-button:hover {
+  background: transparent;
+  color: var(--color-accent);
 }
 
 tbody tr {
@@ -603,6 +648,23 @@ tbody tr:last-child td {
 .watchlist-toggle {
   height: 34px;
   padding: 0 12px;
+}
+
+.realized-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  min-width: 0;
+  margin: 12px 0;
+}
+
+.realized-summary .metric .value.warning {
+  color: var(--color-tool-call);
+}
+
+.realized-summary .metric.compact-value .value {
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .watchlist-summary {
@@ -1050,6 +1112,7 @@ tbody tr.actionable:focus-visible {
 @media (max-width: 680px) {
   .toolbar,
   .metrics,
+  .realized-summary,
   .focus-grid,
   .watchlist-toolbar {
     grid-template-columns: 1fr;

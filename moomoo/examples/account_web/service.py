@@ -1,18 +1,21 @@
 # -*- coding: utf-8 -*-
 """Read-only moomoo SDK access for the local account dashboard."""
 
+import ast
 import json
 import os
 import time
+from collections import defaultdict
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 import pandas as pd
 
 import moomoo as ft
 
-from .market_data import map_moomoo_code
+from .market_data import map_moomoo_code, market_data_url_for_ticker
 
 
 DEFAULT_HOST = "127.0.0.1"
@@ -20,6 +23,7 @@ DEFAULT_PORT = 11111
 DEFAULT_MARKET = "US"
 DEFAULT_ASSET_CURRENCY = "USD"
 DEFAULT_WATCHLIST_GROUP_TYPE = "CUSTOM"
+REALIZED_PL_START = "2010-01-01"
 WATCHLIST_CACHE_DIR_ENV = "MOOMOO_ACCOUNT_WEB_CACHE_DIR"
 WATCHLIST_CACHE_FILE = "watchlists_cache.json"
 WATCHLIST_SYNC_DELAY_SEC = 3.2
@@ -174,6 +178,38 @@ def json_safe(value):
         except Exception:
             return value
     return value
+
+
+def decimal_value(value):
+    if value is None:
+        return Decimal("0")
+    try:
+        if pd.isna(value):
+            return Decimal("0")
+    except (TypeError, ValueError):
+        pass
+    text = str(value).strip().replace(",", "")
+    if text in {"", "N/A", "NA", "None", "nan"}:
+        return Decimal("0")
+    try:
+        return Decimal(text)
+    except InvalidOperation:
+        return Decimal("0")
+
+
+def text_value(value):
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    return str(value).strip()
+
+
+def decimal_json(value, places="0.01"):
+    return float(decimal_value(value).quantize(Decimal(places)))
 
 
 def records(frame, columns=None):
@@ -383,6 +419,308 @@ def sync_watchlists_cache(host, port, group_type_name=DEFAULT_WATCHLIST_GROUP_TY
         synced_at=utc_now_iso(),
     )
     return write_watchlists_cache(payload)
+
+
+def realized_pl_end_date():
+    return date.today().isoformat()
+
+
+def dedupe_frame(frame, columns):
+    if frame is None or not isinstance(frame, pd.DataFrame) or frame.empty:
+        return pd.DataFrame()
+    columns = [column for column in columns if column in frame.columns]
+    if not columns:
+        return frame.copy()
+    return frame.drop_duplicates(subset=columns).copy()
+
+
+def order_ids_from_orders(orders):
+    ids = []
+    seen = set()
+    if orders.empty or "order_id" not in orders.columns:
+        return ids
+    for value in orders["order_id"].tolist():
+        order_id = text_value(value)
+        if order_id and order_id not in seen:
+            seen.add(order_id)
+            ids.append(order_id)
+    return ids
+
+
+def load_realized_pl_data_from_opend(host, port, market, start, end):
+    with trade_context(host, port, market) as ctx:
+        ret, deals = ctx.history_deal_list_query(start=start, end=end, trd_env=REAL_ENV)
+        if ret != ft.RET_OK:
+            raise RuntimeError(deals)
+
+        ret, orders = ctx.history_order_list_query(start=start, end=end, trd_env=REAL_ENV)
+        if ret != ft.RET_OK:
+            raise RuntimeError(orders)
+
+        fee_frames = []
+        for index in range(0, len(order_ids_from_orders(orders)), 20):
+            order_ids = order_ids_from_orders(orders)[index:index + 20]
+            ret, fees = ctx.order_fee_query(order_id_list=order_ids, trd_env=REAL_ENV)
+            if ret == ft.RET_OK and isinstance(fees, pd.DataFrame) and not fees.empty:
+                fee_frames.append(fees.copy())
+            elif ret != ft.RET_OK:
+                raise RuntimeError(fees)
+
+    fees = pd.concat(fee_frames, ignore_index=True) if fee_frames else pd.DataFrame()
+    return deals, orders, fees
+
+
+def fee_amounts_by_order(fees):
+    amounts = defaultdict(Decimal)
+    if fees.empty:
+        return amounts
+    for _, row in fees.iterrows():
+        amounts[text_value(row.get("order_id"))] += decimal_value(row.get("fee_amount"))
+    return amounts
+
+
+def order_currency_map(orders):
+    currencies = {}
+    if orders.empty:
+        return currencies
+    for _, row in orders.iterrows():
+        order_id = text_value(row.get("order_id"))
+        currency = text_value(row.get("currency")).upper()
+        code = text_value(row.get("code")).upper()
+        if not currency or currency == "N/A":
+            if code.startswith("US."):
+                currency = "USD"
+            elif code.startswith("HK."):
+                currency = "HKD"
+            else:
+                currency = "UNKNOWN"
+        if order_id:
+            currencies[order_id] = currency
+    return currencies
+
+
+def currency_for_deal(row, order_currencies):
+    order_id = text_value(row.get("order_id"))
+    if order_id in order_currencies:
+        return order_currencies[order_id]
+    code = text_value(row.get("code")).upper()
+    if code.startswith("US."):
+        return "USD"
+    if code.startswith("HK."):
+        return "HKD"
+    return "UNKNOWN"
+
+
+def allocated_deal_fees(deals, fees):
+    order_fees = fee_amounts_by_order(fees)
+    order_notional = defaultdict(Decimal)
+    for _, row in deals.iterrows():
+        order_notional[text_value(row.get("order_id"))] += decimal_value(row.get("qty")) * decimal_value(row.get("price"))
+
+    allocated = []
+    for _, row in deals.iterrows():
+        order_id = text_value(row.get("order_id"))
+        total_notional = order_notional.get(order_id, Decimal("0"))
+        total_fee = order_fees.get(order_id, Decimal("0"))
+        if total_notional <= 0 or total_fee == 0:
+            allocated.append(Decimal("0"))
+        else:
+            notional = decimal_value(row.get("qty")) * decimal_value(row.get("price"))
+            allocated.append(total_fee * notional / total_notional)
+    return allocated
+
+
+def realized_item_key(currency, code, name):
+    return "{}|{}|{}".format(currency, code, name)
+
+
+def realized_item(items, currency, code, name):
+    key = realized_item_key(currency, code, name)
+    if key not in items:
+        items[key] = {
+            "code": code,
+            "stock_name": name,
+            "currency": currency,
+            "gross_realized_pl": Decimal("0"),
+            "realized_fee": Decimal("0"),
+            "net_realized_pl": Decimal("0"),
+            "closed_qty": Decimal("0"),
+            "realized_trade_count": 0,
+            "first_realized_at": None,
+            "last_realized_at": None,
+        }
+    return items[key]
+
+
+def add_realized_event(items, currency, code, name, closed_qty, gross_pl, realized_fee, realized_at):
+    item = realized_item(items, currency, code, name)
+    item["gross_realized_pl"] += gross_pl
+    item["realized_fee"] += realized_fee
+    item["net_realized_pl"] += gross_pl - realized_fee
+    item["closed_qty"] += closed_qty
+    item["realized_trade_count"] += 1
+    realized_at = text_value(realized_at)
+    if realized_at and (not item["first_realized_at"] or realized_at < item["first_realized_at"]):
+        item["first_realized_at"] = realized_at
+    if realized_at and (not item["last_realized_at"] or realized_at > item["last_realized_at"]):
+        item["last_realized_at"] = realized_at
+
+
+def realized_items_to_json(items):
+    output = []
+    for item in items.values():
+        mapping = map_moomoo_code(item["code"])
+        output.append({
+            "code": mapping.get("source_code") or item["code"],
+            "stock_name": item["stock_name"],
+            "currency": item["currency"],
+            "market_data_ticker": mapping.get("ticker"),
+            "mapping_status": mapping.get("mapping_status"),
+            "mapping_warning": mapping.get("mapping_warning"),
+            "market_data_url": market_data_url_for_ticker(mapping.get("ticker")),
+            "gross_realized_pl": decimal_json(item["gross_realized_pl"]),
+            "realized_fee": decimal_json(item["realized_fee"]),
+            "net_realized_pl": decimal_json(item["net_realized_pl"]),
+            "closed_qty": decimal_json(item["closed_qty"], "0.0001"),
+            "realized_trade_count": item["realized_trade_count"],
+            "first_realized_at": item["first_realized_at"],
+            "last_realized_at": item["last_realized_at"],
+        })
+    return sorted(output, key=lambda row: row["net_realized_pl"], reverse=True)
+
+
+def realized_currency_totals(items):
+    totals = {}
+    for item in items.values():
+        currency = item["currency"] or "UNKNOWN"
+        if currency not in totals:
+            totals[currency] = {
+                "gross_realized_pl": Decimal("0"),
+                "realized_fee": Decimal("0"),
+                "net_realized_pl": Decimal("0"),
+                "closed_qty": Decimal("0"),
+                "realized_trade_count": 0,
+            }
+        totals[currency]["gross_realized_pl"] += item["gross_realized_pl"]
+        totals[currency]["realized_fee"] += item["realized_fee"]
+        totals[currency]["net_realized_pl"] += item["net_realized_pl"]
+        totals[currency]["closed_qty"] += item["closed_qty"]
+        totals[currency]["realized_trade_count"] += item["realized_trade_count"]
+
+    return {
+        currency: {
+            "gross_realized_pl": decimal_json(values["gross_realized_pl"]),
+            "realized_fee": decimal_json(values["realized_fee"]),
+            "net_realized_pl": decimal_json(values["net_realized_pl"]),
+            "closed_qty": decimal_json(values["closed_qty"], "0.0001"),
+            "realized_trade_count": values["realized_trade_count"],
+        }
+        for currency, values in sorted(totals.items())
+    }
+
+
+def calculate_realized_pl(deals, orders, fees):
+    deals = dedupe_frame(deals, ["deal_id", "order_id", "code", "qty", "price", "trd_side", "create_time"])
+    orders = dedupe_frame(orders, ["order_id", "code", "dealt_qty", "dealt_avg_price", "trd_side", "create_time"])
+    fees = dedupe_frame(fees, ["order_id", "fee_amount"])
+    if deals.empty:
+        return {}, [], None, None
+
+    order_currencies = order_currency_map(orders)
+    deals = deals.copy()
+    deals["currency_calc"] = deals.apply(lambda row: currency_for_deal(row, order_currencies), axis=1)
+    deals["fee_alloc"] = allocated_deal_fees(deals, fees)
+    deals["create_time_sort"] = pd.to_datetime(deals.get("create_time"), errors="coerce")
+    deals = deals.sort_values(["create_time_sort", "order_id", "deal_id"], kind="mergesort")
+
+    states = defaultdict(lambda: {"gross_qty": Decimal("0"), "gross_cost": Decimal("0"), "net_qty": Decimal("0"), "net_cost": Decimal("0")})
+    items = {}
+    first_realized_at = None
+    last_realized_at = None
+
+    for _, row in deals.iterrows():
+        side = text_value(row.get("trd_side")).upper()
+        code = text_value(row.get("code")).upper()
+        name = text_value(row.get("stock_name"))
+        currency = text_value(row.get("currency_calc")).upper() or "UNKNOWN"
+        qty = decimal_value(row.get("qty"))
+        price = decimal_value(row.get("price"))
+        fee = decimal_value(row.get("fee_alloc"))
+        if not code or qty <= 0:
+            continue
+
+        state = states[(currency, code, name)]
+        if side == "BUY":
+            state["gross_qty"] += qty
+            state["gross_cost"] += price * qty
+            state["net_qty"] += qty
+            state["net_cost"] += price * qty + fee
+            continue
+
+        if side != "SELL" or state["gross_qty"] <= 0 or state["net_qty"] <= 0:
+            continue
+
+        closing_qty = min(qty, state["gross_qty"], state["net_qty"])
+        if closing_qty <= 0:
+            continue
+
+        avg_gross = state["gross_cost"] / state["gross_qty"]
+        avg_net = state["net_cost"] / state["net_qty"]
+        closing_fee = fee * (closing_qty / qty) if qty else Decimal("0")
+        gross_pl = (price - avg_gross) * closing_qty
+        net_pl = (price * closing_qty - closing_fee) - (avg_net * closing_qty)
+        realized_fee = gross_pl - net_pl
+        realized_at = text_value(row.get("create_time"))
+
+        add_realized_event(items, currency, code, name, closing_qty, gross_pl, realized_fee, realized_at)
+        if realized_at and (not first_realized_at or realized_at < first_realized_at):
+            first_realized_at = realized_at
+        if realized_at and (not last_realized_at or realized_at > last_realized_at):
+            last_realized_at = realized_at
+
+        state["gross_qty"] -= closing_qty
+        state["gross_cost"] -= avg_gross * closing_qty
+        state["net_qty"] -= closing_qty
+        state["net_cost"] -= avg_net * closing_qty
+
+    return realized_currency_totals(items), realized_items_to_json(items), first_realized_at, last_realized_at
+
+
+def build_realized_pl_payload(host, port, market_name=DEFAULT_MARKET):
+    validate_opend_host(host)
+    market_name, market = normalize_market(market_name)
+    start = REALIZED_PL_START
+    end = realized_pl_end_date()
+
+    try:
+        deals, orders, fees = load_realized_pl_data_from_opend(host, port, market, start, end)
+        currency_totals, items, first_realized_at, last_realized_at = calculate_realized_pl(deals, orders, fees)
+    except Exception as exc:
+        return {
+            "status": "unavailable",
+            "market": market_name,
+            "start": start,
+            "end": end,
+            "first_realized_at": None,
+            "last_realized_at": None,
+            "currency_totals": {},
+            "count": 0,
+            "items": [],
+            "error": str(exc),
+        }
+
+    return {
+        "status": "ok",
+        "market": market_name,
+        "start": start,
+        "end": end,
+        "first_realized_at": first_realized_at,
+        "last_realized_at": last_realized_at,
+        "currency_totals": currency_totals,
+        "count": len(items),
+        "items": items,
+        "error": None,
+    }
 
 
 def load_account_data(host, port, market, asset_currency):

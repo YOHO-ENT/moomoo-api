@@ -13,6 +13,7 @@ from .schemas import (
     MarketDataSnapshotsPayload,
     MarketDataStatusPayload,
     PositionsExportPayload,
+    RealizedPlPayload,
     ResearchUniverseExportPayload,
     WatchlistsExportPayload,
     WatchlistsPayload,
@@ -26,6 +27,7 @@ from .service import (
     DEFAULT_WATCHLIST_GROUP_TYPE,
     build_dashboard_payload,
     build_positions_export_payload,
+    build_realized_pl_payload,
     build_research_universe_export_payload,
     build_watchlists_export_payload,
     build_watchlists_payload,
@@ -128,6 +130,18 @@ def api_positions_export(
 ):
     try:
         return build_positions_export_payload(host, port, market)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/realized-pl", response_model=RealizedPlPayload)
+def api_realized_pl(
+    host: str = Query(DEFAULT_HOST),
+    port: int = Query(DEFAULT_PORT, ge=1, le=65535),
+    market: str = Query(DEFAULT_MARKET, pattern="^(HK|US)$"),
+):
+    try:
+        return build_realized_pl_payload(host, port, market)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
